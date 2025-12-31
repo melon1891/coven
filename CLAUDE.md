@@ -30,7 +30,7 @@ The game runs 4 rounds, each with these phases:
    - Declaration bonus (+1 VP) for matching predicted tricks
 3. **Upgrade Selection** - Players ranked by tricks won pick upgrades or take gold
 4. **Worker Placement** - Assign workers to TRADE/HUNT/RECRUIT actions
-5. **Wage Payment** - Pay workers, debt causes VP penalty
+5. **Wage Payment** - Pay workers, tiered debt penalty (max -3 VP)
 
 ### Key Data Structures
 
@@ -41,8 +41,11 @@ The game runs 4 rounds, each with these phases:
 ### Game Configuration (constants at top of file)
 
 - `ROUNDS = 4`, `TRICKS_PER_ROUND = 4`, `CARDS_PER_SET = 6`
-- `WAGE_CURVE = [1, 1, 2, 3]` - Escalating wage costs per round
-- `START_GOLD = 5`, `DEBT_VP_PENALTY_PER_GOLD = 1`
+- `WAGE_CURVE = [1, 1, 2, 2]` - Initial worker wages per round
+- `UPGRADED_WAGE_CURVE = [1, 2, 3, 4]` - Hired worker wages per round
+- `START_GOLD = 5`
+- `DECLARATION_BONUS_VP = 1` (no failure penalty)
+- `calculate_debt_penalty(debt)` - Tiered: 1-3G=-1VP, 4-6G=-2VP, 7+=-3VP
 
 ### Bot Logic
 

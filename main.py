@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-CLI Prototype: Trick-taking x Worker-placement (Witch Guild theme)
+魔女協会 - Trick-taking x Worker-placement card game
 
 RULES (A plan, NO TRUMP) implemented:
 - No trump suit.
@@ -36,15 +36,35 @@ SETS_PER_GAME = 4
 REVEAL_UPGRADES = 5                # players + 1 (for 4p => 5)
 
 START_GOLD = 5
-WAGE_CURVE = [1, 1, 2, 3]
-DEBT_VP_PENALTY_PER_GOLD = 1
+WAGE_CURVE = [1, 1, 2, 2]  # 初期ワーカーの給料（R4緩和: 3→2）
+UPGRADED_WAGE_CURVE = [1, 2, 3, 4]  # 雇用したワーカーの給料（全体緩和）
+INITIAL_WORKERS = 1  # 初期ワーカー数
 RESCUE_GOLD_FOR_4TH = 2
 TAKE_GOLD_INSTEAD = 2
-DECLARATION_BONUS_VP = 1
+DECLARATION_BONUS_VP = 1  # 宣言成功ボーナス（失敗ペナルティなし）
 
 ACTIONS = ["TRADE", "HUNT", "RECRUIT"]
 
 LOG_PATH = "game_log.jsonl"
+
+
+# ======= Helper Functions =======
+
+def calculate_debt_penalty(debt: int) -> int:
+    """
+    段階的な負債ペナルティを計算する。
+    1-3ゴールド: -1 VP
+    4-6ゴールド: -2 VP
+    7+ゴールド:  -3 VP（上限）
+    """
+    if debt <= 0:
+        return 0
+    elif debt <= 3:
+        return 1
+    elif debt <= 6:
+        return 2
+    else:
+        return 3
 
 
 # ======= Logger =======
@@ -73,11 +93,15 @@ class JsonlLogger:
 
 @dataclass(frozen=True)
 class Card:
-    suit: str
-    rank: int  # 1..13
+    suit: str  # "Spade", "Heart", "Diamond", "Club", "Trump"
+    rank: int  # 1..13 (通常) or 1..4 (切り札)
 
     def __str__(self) -> str:
         return f"{self.suit[0]}{self.rank:02d}"
+
+    def is_trump(self) -> bool:
+        """切り札カードかどうかを判定"""
+        return self.suit == "Trump"
 
 
 @dataclass
@@ -90,7 +114,7 @@ class Player:
     vp: int = 0
 
     # Workers
-    basic_workers_total: int = 2
+    basic_workers_total: int = 1
     basic_workers_new_hires: int = 0  # hires that become active next round
 
     # Action levels (incremental improvements, 0..2)
@@ -102,6 +126,9 @@ class Player:
 
     # Permanent witches (flavor for tie-break)
     witches: List[str] = field(default_factory=list)
+
+    # Witch ability usage this round
+    ritual_used_this_round: bool = False  # WITCH_RITUAL: アクション再実行
 
     # Trick-taking round state
     tricks_won_this_round: int = 0
@@ -136,6 +163,8 @@ def snapshot_players(players: List[Player]) -> List[Dict[str, Any]]:
             "hunt_yield": p.hunt_yield(),
             "recruit_upgrade": p.recruit_upgrade,
             "witches": p.witches[:],
+            "declared_tricks": p.declared_tricks,
+            "tricks_won": p.tricks_won_this_round,
         })
     return snap
 
@@ -174,18 +203,26 @@ def print_state(players: List[Player], round_no: int) -> None:
 
 # ======= Setup =======
 
-def deal_fixed_sets(players: List[Player], seed: int, logger: Optional[JsonlLogger]) -> None:
+def deal_fixed_sets(
+    players: List[Player],
+    seed: int,
+    logger: Optional[JsonlLogger],
+    max_rank: int = 6,
+    num_decks: int = 4,
+) -> None:
     """
     Each player gets (SETS_PER_GAME * CARDS_PER_SET) cards.
-    Prototype uses 2 decks (104 cards). For 4p:
-      needed = 4 * 4 * 6 = 96 cards => OK.
+    Default: 4 decks (96 cards) + 8 trump cards (T1-T4 x2) = 104 cards total.
+    For 4p: needed = 4 * 4 * 6 = 96 cards => 8 cards surplus.
     """
     rng = random.Random(seed)
-    deck = [Card(s, r) for s in SUITS for r in range(1, 14)]
-    deck2 = [Card(s, r) for s in SUITS for r in range(1, 14)]
+    deck: List[Card] = []
+    for _ in range(num_decks):
+        deck.extend([Card(s, r) for s in SUITS for r in range(1, max_rank + 1)])
+    # 切り札カード追加（T1〜T4を2枚ずつ、計8枚）
+    trumps = [Card("Trump", r) for r in range(1, 5) for _ in range(2)]
+    deck.extend(trumps)
     rng.shuffle(deck)
-    rng.shuffle(deck2)
-    deck.extend(deck2)
 
     cards_per_player = SETS_PER_GAME * CARDS_PER_SET
 
@@ -206,7 +243,7 @@ def reveal_upgrades(rng: random.Random, n: int) -> List[str]:
         ["UP_HUNT"] * 6 +
         ["RECRUIT_DOUBLE"] * 2 +
         ["RECRUIT_WAGE_DISCOUNT"] * 2 +
-        ["WITCH_BLACKROAD", "WITCH_BLOODHUNT", "WITCH_HERD", "WITCH_RITUAL", "WITCH_INSPECT", "WITCH_BARRIER"]
+        ["WITCH_BLACKROAD", "WITCH_BLOODHUNT", "WITCH_HERD", "WITCH_RITUAL", "WITCH_BARRIER"]
     )
     return [rng.choice(pool) for _ in range(n)]
 
@@ -221,10 +258,60 @@ def upgrade_name(u: str) -> str:
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
         "WITCH_HERD": "《群導の魔女》",
         "WITCH_RITUAL": "《大儀式の執行者》",
-        "WITCH_INSPECT": "《巡察の魔女》",
         "WITCH_BARRIER": "《結界織りの魔女》",
     }
     return mapping.get(u, u)
+
+
+def upgrade_description(u: str) -> str:
+    """Return detailed description for an upgrade card."""
+    descriptions = {
+        "UP_TRADE": "交易アクションの収益が+1金貨増加します。最大レベル2まで強化可能。",
+        "UP_HUNT": "討伐アクションの獲得VPが+1増加します。最大レベル2まで強化可能。",
+        "RECRUIT_DOUBLE": "雇用アクション時、1回で2人の見習いを雇用できるようになります。",
+        "RECRUIT_WAGE_DISCOUNT": "雇用したターンの給料支払いが軽減されます。",
+        "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+1金",
+        "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
+        "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
+        "WITCH_RITUAL": "【効果】各ラウンド1回、選んだ基本アクションをもう一度実行",
+        "WITCH_BARRIER": "【効果】各ラウンド最初にHUNTを行った場合、追加で+1VP",
+    }
+    return descriptions.get(u, "説明なし")
+
+
+# Witch card flavor texts
+WITCH_FLAVOR = {
+    "WITCH_BLACKROAD": """《黒路の魔女》
+役割：交易・供給
+
+かつて閉ざされた交易路を、魔法で「通れるもの」に変えた魔女。
+その道を、誰が最初に閉ざしたのかは語られない。""",
+
+    "WITCH_BLOODHUNT": """《血誓の討伐官》
+役割：魔物討伐・VP加速
+
+討伐の成功は、必ず誓約と引き換えに訪れる。
+彼女が交わす血の誓いの内容を、村長は知らない。""",
+
+    "WITCH_HERD": """《群導の魔女》
+役割：見習い・雇用支援
+
+見習いたちは彼女の合図ひとつで動く。
+だが、誰も彼女に逆らおうとはしない。""",
+
+    "WITCH_RITUAL": """《大儀式の執行者》
+役割：爆発力・借金前提
+
+協会が「許可した」時にのみ執り行われる儀式。
+成功すれば村は救われる。
+失敗の記録は、協会の文書には残らない。""",
+
+    "WITCH_BARRIER": """《結界織りの魔女》
+役割：防衛・条件付きVP
+
+結界は村を守る。
+同時に、外へ出ることも難しくする。""",
+}
 
 
 def can_take_upgrade(player: Player, u: str) -> bool:
@@ -292,9 +379,13 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str]) -> str:
 
 def declare_tricks(player: Player, round_hand: List[Card], set_index: int) -> int:
     if player.is_bot:
-        suits = [c.suit for c in round_hand]
-        max_same = max(suits.count(s) for s in SUITS)
-        # declare 0..4
+        # 切り札の枚数をカウント
+        trump_count = sum(1 for c in round_hand if c.is_trump())
+        non_trump = [c for c in round_hand if not c.is_trump()]
+        suits = [c.suit for c in non_trump]
+        max_same = max((suits.count(s) for s in SUITS), default=0)
+
+        # 基本値を決定
         if max_same >= 3:
             cand = [2, 2, 3, 1, 4]
         elif max_same == 2:
@@ -302,6 +393,9 @@ def declare_tricks(player: Player, round_hand: List[Card], set_index: int) -> in
         else:
             cand = [0, 1, 1, 2, 2]
         v = player.rng.choice(cand)
+
+        # 切り札があれば宣言数を増やす（切り札1枚につき+1トリック期待）
+        v += trump_count
         return max(0, min(TRICKS_PER_ROUND, v))
 
     print(f"\n{player.name} Round hand (set #{set_index+1}, {CARDS_PER_SET} cards): " + " ".join(str(c) for c in round_hand))
@@ -347,8 +441,15 @@ def seal_cards(player: Player, hand: List[Card], set_index: int) -> List[Card]:
         return []
 
     if player.is_bot:
-        # bot heuristic: seal the two lowest ranks
-        sealed = sorted(hand, key=lambda c: c.rank)[:need_seal]
+        # bot heuristic: seal the two lowest ranks, but never seal trump cards
+        non_trump = [c for c in hand if not c.is_trump()]
+        # 切り札以外から最低ランクを選ぶ
+        sealable = sorted(non_trump, key=lambda c: c.rank)
+        if len(sealable) >= need_seal:
+            sealed = sealable[:need_seal]
+        else:
+            # 切り札以外が足りない場合は切り札も含める
+            sealed = sealable + sorted([c for c in hand if c.is_trump()], key=lambda c: c.rank)[:need_seal - len(sealable)]
         for c in sealed:
             hand.remove(c)
         return sealed
@@ -357,8 +458,8 @@ def seal_cards(player: Player, hand: List[Card], set_index: int) -> List[Card]:
     print("Your hand:", " ".join(str(c) for c in hand))
     sealed: List[Card] = []
     while len(sealed) < need_seal:
-        s = input(f"Select card to SEAL ({len(sealed)+1}/{need_seal}) e.g., S13/H07/D01/C10: ").strip().upper()
-        suit_map = {"S": "Spade", "H": "Heart", "D": "Diamond", "C": "Club"}
+        s = input(f"Select card to SEAL ({len(sealed)+1}/{need_seal}) e.g., S13/H07/D01/C10/T01: ").strip().upper()
+        suit_map = {"S": "Spade", "H": "Heart", "D": "Diamond", "C": "Club", "T": "Trump"}
         if len(s) < 2 or s[0] not in suit_map:
             print("Invalid.")
             continue
@@ -377,34 +478,58 @@ def seal_cards(player: Player, hand: List[Card], set_index: int) -> List[Card]:
     return sealed
 
 
-# ======= Trick-taking (Normal must-follow, NO TRUMP) =======
+# ======= Trick-taking (with Trump cards) =======
 
 def trick_winner(lead_suit: str, plays: List[Tuple[Player, Card]]) -> Player:
     """
-    No trump:
-      - Highest card in lead suit wins.
-      - Other suits cannot win.
+    Trump rules:
+      - If any trump card is played, highest trump wins.
+      - Otherwise, highest card in lead suit wins.
+    Tiebreaker (same rank):
+      - Leader wins if tied.
+      - Otherwise, player closest to leader (clockwise) wins.
+    plays[0] is the leader, plays order is clockwise.
     """
-    leads = [(p, c) for p, c in plays if c.suit == lead_suit]
-    best_p, best_c = leads[0]
-    for p, c in leads[1:]:
-        if c.rank > best_c.rank:
-            best_p, best_c = p, c
-    return best_p
+    # 切り札が出ているか確認
+    trumps = [(i, p, c) for i, (p, c) in enumerate(plays) if c.is_trump()]
+    if trumps:
+        # 切り札の中で最高ランクを探す
+        max_rank = max(c.rank for _, _, c in trumps)
+        # 同ランクの場合、親に近い人（インデックスが小さい方）が勝ち
+        for i, p, c in trumps:
+            if c.rank == max_rank:
+                return p
+
+    # 切り札なし → リードスートの最高ランク
+    leads = [(i, p, c) for i, (p, c) in enumerate(plays) if c.suit == lead_suit]
+    max_rank = max(c.rank for _, _, c in leads)
+    # 同ランクの場合、親に近い人（インデックスが小さい方）が勝ち
+    for i, p, c in leads:
+        if c.rank == max_rank:
+            return p
+
+    # Should never reach here
+    return plays[0][0]
 
 
 def legal_cards(hand: List[Card], lead_card: Optional[Card]) -> List[Card]:
     """
-    - If leading: any card.
+    - If leading: any card except trump (cannot lead with trump).
     - If not leading: must follow lead suit if possible.
-      Otherwise any card is legal.
+      If cannot follow, any card including trump is legal.
     """
     if lead_card is None:
-        return hand[:]
+        # リード時: 切り札以外を出せる
+        non_trump = [c for c in hand if not c.is_trump()]
+        # 切り札しか持っていない場合は切り札を出せる
+        return non_trump if non_trump else hand[:]
 
     lead_suit = lead_card.suit
     follow = [c for c in hand if c.suit == lead_suit]
-    return follow if follow else hand[:]
+    if follow:
+        return follow  # フォロー必須
+    else:
+        return hand[:]  # フォローできない → 切り札含め何でもOK
 
 
 def choose_card(player: Player, lead_card: Optional[Card], hand: List[Card]) -> Card:
@@ -416,16 +541,20 @@ def choose_card(player: Player, lead_card: Optional[Card], hand: List[Card]) -> 
     while True:
         print(f"\n{player.name} playable hand: " + " ".join(str(c) for c in hand))
         if lead_card:
-            print(f"Lead: {lead_card} | (No trump)")
+            print(f"Lead: {lead_card}")
             if any(c.suit == lead_card.suit for c in hand):
                 print(f"Must follow: {lead_card.suit}")
+            else:
+                trump_in_hand = [c for c in hand if c.is_trump()]
+                if trump_in_hand:
+                    print("Cannot follow - Trump available!")
         else:
-            print("You are leading | (No trump)")
+            print("You are leading (Trump cards cannot lead)")
 
         print("Legal:", " ".join(str(c) for c in legal))
 
-        s = input("Choose a card (e.g., S13 / H07 / D01 / C10): ").strip().upper()
-        suit_map = {"S": "Spade", "H": "Heart", "D": "Diamond", "C": "Club"}
+        s = input("Choose a card (e.g., S13 / H07 / D01 / C10 / T01): ").strip().upper()
+        suit_map = {"S": "Spade", "H": "Heart", "D": "Diamond", "C": "Club", "T": "Trump"}
         if len(s) < 2 or s[0] not in suit_map:
             print("Invalid.")
             continue
@@ -440,7 +569,7 @@ def choose_card(player: Player, lead_card: Optional[Card], hand: List[Card]) -> 
             print("You don't have that card.")
             continue
         if chosen not in legal:
-            print("Illegal play (must-follow rule).")
+            print("Illegal play (must-follow rule or cannot lead with trump).")
             continue
         return chosen
 
@@ -460,6 +589,7 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
 
     for p in players:
         p.tricks_won_this_round = 0
+        p.ritual_used_this_round = False
 
     full_hands: Dict[str, List[Card]] = {p.name: players[i].sets[set_index][:] for i, p in enumerate(players)}
 
@@ -503,6 +633,11 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
             "no_trump": True,
             "players": snapshot_players(players),
         })
+
+    # 他プレイヤーのシールカードを表示
+    print("\n--- Sealed Cards (All Players) ---")
+    for p in players:
+        print(f"  {p.name}: {', '.join(str(c) for c in sealed_by_player[p.name])}")
 
     print(f"\n--- Trick-taking Round {round_no+1}: Using set #{set_index+1} (6 -> seal 2 -> play 4) ---")
     print(f"Leader this round: {players[leader_index].name} | (No trump)")
@@ -551,6 +686,13 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
             "sealed": {name: [str(c) for c in sealed_by_player[name]] for name in sealed_by_player},
         })
 
+    print("\n--- Trick Results ---")
+    print("-" * 40)
+    for p in players:
+        status = "✓" if p.tricks_won_this_round == p.declared_tricks else ""
+        print(f"  {p.name}: {p.tricks_won_this_round} tricks (declared {p.declared_tricks}) {status}")
+    print("-" * 40)
+
     print("\n--- Declaration Bonus ---")
     apply_declaration_bonus(players, logger, round_no)
 
@@ -595,11 +737,27 @@ def choose_actions_for_player(player: Player) -> List[str]:
 
 def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
     before = {"gold": player.gold, "vp": player.vp, "new_hires": player.basic_workers_new_hires}
+    first_hunt_done = False  # Track for WITCH_BARRIER
+    witch_bonuses: List[str] = []
+
     for a in actions:
         if a == "TRADE":
             player.gold += player.trade_yield()
+            # WITCH_BLACKROAD: TRADEで+1金
+            if "WITCH_BLACKROAD" in player.witches:
+                player.gold += 1
+                witch_bonuses.append("黒路の魔女: +1金")
         elif a == "HUNT":
             player.vp += player.hunt_yield()
+            # WITCH_BLOODHUNT: HUNTで+1VP
+            if "WITCH_BLOODHUNT" in player.witches:
+                player.vp += 1
+                witch_bonuses.append("血誓の討伐官: +1VP")
+            # WITCH_BARRIER: 最初のHUNTで+1VP
+            if not first_hunt_done and "WITCH_BARRIER" in player.witches:
+                player.vp += 1
+                witch_bonuses.append("結界織りの魔女: +1VP (初回HUNT)")
+            first_hunt_done = True
         elif a == "RECRUIT":
             hires = 1
             if player.recruit_upgrade == "RECRUIT_DOUBLE":
@@ -607,15 +765,17 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
             player.basic_workers_new_hires += hires
         else:
             raise ValueError(f"Unknown action: {a}")
+
     after = {"gold": player.gold, "vp": player.vp, "new_hires": player.basic_workers_new_hires}
-    return {"before": before, "after": after}
+    return {"before": before, "after": after, "witch_bonuses": witch_bonuses}
 
 
-def pay_wages_and_debt(player: Player, wage_rate: int) -> Dict[str, Any]:
+def pay_wages_and_debt(player: Player, round_no: int) -> Dict[str, Any]:
     """
     Rule:
     - New hires do NOT act this round
     - BUT their wage IS paid starting this round
+    - Initial workers use WAGE_CURVE, hired workers use UPGRADED_WAGE_CURVE
     """
     before_gold, before_vp = player.gold, player.vp
 
@@ -623,26 +783,44 @@ def pay_wages_and_debt(player: Player, wage_rate: int) -> Dict[str, Any]:
     workers_hired_this_round = player.basic_workers_new_hires
     workers_paid = workers_active + workers_hired_this_round  # include hires in wage
 
-    wage_gross = wage_rate * workers_paid
+    # Calculate wages: initial workers vs upgraded (hired) workers
+    initial_wage_rate = WAGE_CURVE[round_no]
+    upgraded_wage_rate = UPGRADED_WAGE_CURVE[round_no]
+
+    initial_workers_count = min(INITIAL_WORKERS, workers_paid)
+    upgraded_workers_count = workers_paid - initial_workers_count
+
+    wage_gross = (initial_workers_count * initial_wage_rate) + (upgraded_workers_count * upgraded_wage_rate)
 
     discount = 0
+    witch_wage_bonus = ""
     if player.recruit_upgrade == "RECRUIT_WAGE_DISCOUNT":
         # interpret: reduce wage by 1 per hired worker this round
         discount = workers_hired_this_round
+
+    # WITCH_HERD: 見習いを雇用したラウンド、給料合計-1
+    if "WITCH_HERD" in player.witches and workers_hired_this_round > 0:
+        discount += 1
+        witch_wage_bonus = "群導の魔女: 給料-1"
 
     wage_net = max(0, wage_gross - discount)
 
     paid = min(player.gold, wage_net)
     short = max(0, wage_net - player.gold)
 
+    debt_penalty = 0
     if player.gold >= wage_net:
         player.gold -= wage_net
     else:
         player.gold = 0
-        player.vp -= short * DEBT_VP_PENALTY_PER_GOLD
+        debt_penalty = calculate_debt_penalty(short)
+        player.vp -= debt_penalty
 
     return {
-        "wage_rate": wage_rate,
+        "initial_wage_rate": initial_wage_rate,
+        "upgraded_wage_rate": upgraded_wage_rate,
+        "initial_workers": initial_workers_count,
+        "upgraded_workers": upgraded_workers_count,
         "workers_active": workers_active,
         "workers_hired_this_round": workers_hired_this_round,
         "workers_paid_total": workers_paid,
@@ -651,11 +829,12 @@ def pay_wages_and_debt(player: Player, wage_rate: int) -> Dict[str, Any]:
         "wage_net": wage_net,
         "paid_gold": paid,
         "short_gold": short,
+        "debt_penalty": debt_penalty,
         "gold_before": before_gold,
         "gold_after": player.gold,
         "vp_before": before_vp,
         "vp_after": player.vp,
-        "debt_penalty_per_gold": DEBT_VP_PENALTY_PER_GOLD,
+        "witch_wage_bonus": witch_wage_bonus,
     }
 
 
@@ -684,7 +863,8 @@ def main():
             "REVEAL_UPGRADES": REVEAL_UPGRADES,
             "START_GOLD": START_GOLD,
             "WAGE_CURVE": WAGE_CURVE,
-            "DEBT_VP_PENALTY_PER_GOLD": DEBT_VP_PENALTY_PER_GOLD,
+            "UPGRADED_WAGE_CURVE": UPGRADED_WAGE_CURVE,
+            "DEBT_PENALTY_TIERED": True,
             "RESCUE_GOLD_FOR_4TH": RESCUE_GOLD_FOR_4TH,
             "TAKE_GOLD_INSTEAD": TAKE_GOLD_INSTEAD,
             "DECLARATION_BONUS_VP": DECLARATION_BONUS_VP,
@@ -776,12 +956,13 @@ def main():
                 "state": snapshot_players([p])[0],
             })
 
-        wage_rate = WAGE_CURVE[round_no]
-        print(f"\n--- Wage Payment (rate={wage_rate}) and Debt (-{DEBT_VP_PENALTY_PER_GOLD}VP/gold) ---")
-        logger.log("wage_phase_start", {"round": round_no + 1, "wage_rate": wage_rate, "players": snapshot_players(players)})
+        initial_rate = WAGE_CURVE[round_no]
+        upgraded_rate = UPGRADED_WAGE_CURVE[round_no]
+        print(f"\n--- Wage Payment (初期={initial_rate}, 雇用={upgraded_rate}) and Debt (-{DEBT_VP_PENALTY_PER_GOLD}VP/gold) ---")
+        logger.log("wage_phase_start", {"round": round_no + 1, "initial_wage_rate": initial_rate, "upgraded_wage_rate": upgraded_rate, "players": snapshot_players(players)})
 
         for p in players:
-            res = pay_wages_and_debt(p, wage_rate)
+            res = pay_wages_and_debt(p, round_no)
             print(f"{p.name}: Gold {res['gold_before']}->{res['gold_after']}, VP {res['vp_before']}->{res['vp_after']}")
             logger.log("wage_result", {
                 "round": round_no + 1,
@@ -872,6 +1053,9 @@ class GameEngine:
         self.wp_player_index = 0
         self.wp_actions: List[str] = []
 
+        # Trick history for display (current round)
+        self.trick_history: List[Dict[str, Any]] = []
+
         # Game log for display
         self.log_messages: List[str] = []
 
@@ -888,6 +1072,9 @@ class GameEngine:
             "sub_phase": self.sub_phase,
             "players": snapshot_players(self.players),
             "revealed_upgrades": self.revealed_upgrades[:],
+            "trick_history": self.trick_history[:],
+            "current_trick": self.current_trick,
+            "sealed_by_player": {name: [str(c) for c in cards] for name, cards in self.sealed_by_player.items()},
             "log": self.log_messages[-20:],  # Last 20 messages
             "game_over": self.phase == "game_end",
         }
@@ -938,10 +1125,27 @@ class GameEngine:
             self._pending_input = None
 
         elif req_type == "worker_actions":
-            # response is list of action strings
-            self.wp_actions = response
-            delta = resolve_actions(player, response)
-            self._log(f"{player.name} actions: {response}")
+            # response can be list of actions or dict with additional witch abilities
+            if isinstance(response, dict):
+                actions = response.get("actions", [])
+                ritual_action = response.get("ritual_action")
+
+                # Resolve main actions
+                delta = resolve_actions(player, actions)
+                self._log(f"{player.name} actions: {actions}")
+
+                # Apply WITCH_RITUAL (extra action)
+                if ritual_action:
+                    extra_delta = resolve_actions(player, [ritual_action])
+                    player.ritual_used_this_round = True
+                    self._log(f"  《大儀式の執行者》: 追加{ritual_action}")
+            else:
+                # Backward compatibility: response is just a list
+                actions = response
+                delta = resolve_actions(player, actions)
+                self._log(f"{player.name} actions: {actions}")
+
+            self.wp_actions = actions
             self._pending_input = None
 
     def step(self) -> bool:
@@ -970,10 +1174,12 @@ class GameEngine:
 
             for p in self.players:
                 p.tricks_won_this_round = 0
+                p.ritual_used_this_round = False
 
             self.full_hands = {p.name: p.sets[self.set_index][:] for p in self.players}
             self.playable_hands = {}
             self.sealed_by_player = {}
+            self.trick_history = []  # Clear trick history for new round
 
             self.phase = "declaration"
             self.sub_phase = 0  # Player index
@@ -1093,6 +1299,8 @@ class GameEngine:
                     player=player,
                     context={
                         "num_workers": player.basic_workers_total,
+                        "witches": player.witches[:],
+                        "can_use_ritual": "WITCH_RITUAL" in player.witches and not player.ritual_used_this_round,
                     }
                 )
                 self.wp_player_index += 1
@@ -1101,11 +1309,12 @@ class GameEngine:
 
         # Phase: wage_payment
         if self.phase == "wage_payment":
-            wage_rate = WAGE_CURVE[self.round_no]
-            self._log(f"--- Wage Payment (rate={wage_rate}) ---")
+            initial_rate = WAGE_CURVE[self.round_no]
+            upgraded_rate = UPGRADED_WAGE_CURVE[self.round_no]
+            self._log(f"--- Wage Payment (初期={initial_rate}, 雇用={upgraded_rate}) ---")
 
             for p in self.players:
-                res = pay_wages_and_debt(p, wage_rate)
+                res = pay_wages_and_debt(p, self.round_no)
                 self._log(f"{p.name}: Gold {res['gold_before']}->{res['gold_after']}, VP {res['vp_before']}->{res['vp_after']}")
 
             # Activate new hires
@@ -1136,11 +1345,23 @@ class GameEngine:
             plays_str = " | ".join(f"{pl.name}:{c}" for pl, c in self.trick_plays)
             self._log(f"Trick {self.current_trick + 1}: {plays_str} -> {winner.name} wins")
 
+            # Save trick history for display
+            self.trick_history.append({
+                "trick_no": self.current_trick + 1,
+                "plays": [(pl.name, str(c)) for pl, c in self.trick_plays],
+                "winner": winner.name,
+                "lead_suit": self.lead_card.suit,
+            })
+
             self.trick_leader = next(i for i, p in enumerate(self.players) if p.name == winner.name)
             self.current_trick += 1
 
             if self.current_trick >= TRICKS_PER_ROUND:
-                # All tricks done, apply declaration bonus
+                # All tricks done, show summary and apply declaration bonus
+                self._log("--- Trick Results ---")
+                for p in self.players:
+                    status = "✓" if p.tricks_won_this_round == p.declared_tricks else ""
+                    self._log(f"  {p.name}: {p.tricks_won_this_round} tricks (declared {p.declared_tricks}) {status}")
                 self._apply_declaration_bonus()
                 self.ranked_players = rank_players_for_upgrade(self.players, self.leader_index)
                 self.upgrade_pick_index = 0
@@ -1193,9 +1414,227 @@ class GameEngine:
         self._log(f"Winner: {players_sorted[0].name}")
 
 
+# ======= Simulation =======
+
+def run_single_game_quiet(
+    seed: int,
+    max_rank: int = 6,
+    num_decks: int = 4,
+) -> Dict[str, Any]:
+    """Run a single game with all bots, no output. Returns final scores."""
+    rng = random.Random(seed)
+
+    players = [
+        Player("P1", is_bot=True, rng=random.Random(seed + 1)),
+        Player("P2", is_bot=True, rng=random.Random(seed + 2)),
+        Player("P3", is_bot=True, rng=random.Random(seed + 3)),
+        Player("P4", is_bot=True, rng=random.Random(seed + 4)),
+    ]
+
+    deal_fixed_sets(players, seed=seed, logger=None, max_rank=max_rank,
+                    num_decks=num_decks)
+
+    for round_no in range(ROUNDS):
+        revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
+        set_index = round_no % SETS_PER_GAME
+        leader_index = round_no % len(players)
+
+        for p in players:
+            p.tricks_won_this_round = 0
+
+        # Declaration
+        full_hands = {p.name: p.sets[set_index][:] for p in players}
+        for p in players:
+            p.declared_tricks = declare_tricks(p, full_hands[p.name][:], set_index)
+
+        # Seal
+        playable_hands = {}
+        for p in players:
+            hand = full_hands[p.name]
+            seal_cards(p, hand, set_index)
+            playable_hands[p.name] = hand[:]
+
+        # Play tricks
+        leader = leader_index
+        for trick_idx in range(TRICKS_PER_ROUND):
+            plays: List[Tuple[Player, Card]] = []
+            lead_card: Optional[Card] = None
+            for offset in range(len(players)):
+                idx = (leader + offset) % len(players)
+                pl = players[idx]
+                hand = playable_hands[pl.name]
+                chosen = choose_card(pl, lead_card, hand)
+                hand.remove(chosen)
+                plays.append((pl, chosen))
+                if lead_card is None:
+                    lead_card = chosen
+            assert lead_card is not None
+            winner = trick_winner(lead_card.suit, plays)
+            winner.tricks_won_this_round += 1
+            leader = next(i for i, pp in enumerate(players) if pp.name == winner.name)
+
+        # Declaration bonus
+        for p in players:
+            if p.tricks_won_this_round == p.declared_tricks:
+                p.vp += DECLARATION_BONUS_VP
+
+        # Upgrade pick
+        ranked = rank_players_for_upgrade(players, leader_index)
+        for p in ranked:
+            choice = choose_upgrade_or_gold(p, revealed)
+            if choice == "GOLD":
+                p.gold += TAKE_GOLD_INSTEAD
+            else:
+                revealed.remove(choice)
+                apply_upgrade(p, choice)
+
+        fourth = ranked[-1]
+        fourth.gold += RESCUE_GOLD_FOR_4TH
+
+        # Worker placement
+        for p in players:
+            actions = choose_actions_for_player(p)
+            resolve_actions(p, actions)
+
+        # Wage payment
+        for p in players:
+            pay_wages_and_debt(p, round_no)
+
+        # Activate hires
+        for p in players:
+            if p.basic_workers_new_hires > 0:
+                p.basic_workers_total += p.basic_workers_new_hires
+                p.basic_workers_new_hires = 0
+
+    # Return results
+    players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
+    vps = [p.vp for p in players_sorted]
+    return {
+        "winner": players_sorted[0].name,
+        "vps": vps,
+        "vp_diff_1st_2nd": vps[0] - vps[1],
+        "vp_diff_1st_last": vps[0] - vps[-1],
+    }
+
+
+def run_simulation(max_rank: int, num_games: int = 100) -> Dict[str, Any]:
+    """Run multiple games with specified max rank and collect statistics."""
+    results = []
+    for game_id in range(num_games):
+        seed = game_id * 1000 + max_rank
+        result = run_single_game_quiet(seed, max_rank)
+        results.append(result)
+
+    # Calculate statistics
+    vp_diffs = [r["vp_diff_1st_2nd"] for r in results]
+    avg_diff = sum(vp_diffs) / len(vp_diffs)
+    std_diff = (sum((x - avg_diff) ** 2 for x in vp_diffs) / len(vp_diffs)) ** 0.5
+
+    return {
+        "max_rank": max_rank,
+        "num_games": num_games,
+        "avg_vp_diff": avg_diff,
+        "std_vp_diff": std_diff,
+        "min_diff": min(vp_diffs),
+        "max_diff": max(vp_diffs),
+    }
+
+
+def run_all_simulations():
+    """Run simulations for rank ranges 4-10, 100 games each."""
+    print("=== カードランク最適化シミュレーション ===")
+    print(f"各設定で100ゲーム実行中...\n")
+
+    results = []
+    for max_rank in range(4, 11):
+        print(f"ランク1-{max_rank} をテスト中...", end=" ", flush=True)
+        result = run_simulation(max_rank, num_games=100)
+        results.append(result)
+        print(f"完了 (平均VP差: {result['avg_vp_diff']:.2f})")
+
+    print("\n" + "=" * 50)
+    print("=== シミュレーション結果 ===")
+    print("=" * 50)
+    print(f"{'ランク範囲':<12} {'平均VP差':<10} {'標準偏差':<10} {'最小':<6} {'最大':<6}")
+    print("-" * 50)
+
+    best = min(results, key=lambda r: r["avg_vp_diff"])
+    for r in results:
+        marker = " ★" if r == best else ""
+        print(f"1-{r['max_rank']:<10} {r['avg_vp_diff']:<10.2f} {r['std_vp_diff']:<10.2f} {r['min_diff']:<6} {r['max_diff']:<6}{marker}")
+
+    print("-" * 50)
+    print(f"\n推奨: ランク 1-{best['max_rank']} (最小平均VP差: {best['avg_vp_diff']:.2f})")
+
+
+def run_deck_simulation(num_decks: int, num_games: int = 100) -> Dict[str, Any]:
+    """Run simulation with specified deck count. Trump is fixed at T1-T4 x2 = 8 cards."""
+    results = []
+    for game_id in range(num_games):
+        seed = game_id * 1000 + num_decks * 100
+        result = run_single_game_quiet(seed, max_rank=6, num_decks=num_decks)
+        results.append(result)
+
+    vp_diffs = [r["vp_diff_1st_2nd"] for r in results]
+    avg_diff = sum(vp_diffs) / len(vp_diffs)
+    std_diff = (sum((x - avg_diff) ** 2 for x in vp_diffs) / len(vp_diffs)) ** 0.5
+
+    return {
+        "num_decks": num_decks,
+        "total_cards": num_decks * 24 + 8,  # 4suits * 6ranks = 24, plus 8 trumps
+        "num_games": num_games,
+        "avg_vp_diff": avg_diff,
+        "std_vp_diff": std_diff,
+    }
+
+
+def run_all_deck_simulations():
+    """Run simulations for different deck counts. Trump is fixed at T1-T4 x2."""
+    print("=== デッキ数最適化シミュレーション ===")
+    print("(切り札は T1〜T4 x 2枚 = 8枚固定)")
+    print(f"各設定で100ゲーム実行中...\n")
+
+    # テスト設定: デッキ3-5
+    configs = [3, 4, 5]
+
+    results = []
+    for num_decks in configs:
+        total = num_decks * 24 + 8
+        print(f"{num_decks}デッキ (計{total}枚) をテスト中...", end=" ", flush=True)
+        result = run_deck_simulation(num_decks, num_games=100)
+        results.append(result)
+        print(f"完了 (平均VP差: {result['avg_vp_diff']:.2f})")
+
+    print("\n" + "=" * 60)
+    print("=== シミュレーション結果 ===")
+    print("=" * 60)
+    print(f"{'設定':<20} {'総枚数':<8} {'平均VP差':<10} {'標準偏差':<10}")
+    print("-" * 60)
+
+    best = min(results, key=lambda r: r["avg_vp_diff"])
+    for r in results:
+        marker = " ★" if r == best else ""
+        config = f"{r['num_decks']}デッキ"
+        print(f"{config:<20} {r['total_cards']:<8} {r['avg_vp_diff']:<10.2f} {r['std_vp_diff']:<10.2f}{marker}")
+
+    print("-" * 60)
+    print(f"\n推奨: {best['num_decks']}デッキ")
+
+
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="魔女協会 Card Game")
+    parser.add_argument("--simulate", action="store_true", help="Run rank optimization simulation")
+    parser.add_argument("--simulate-deck", action="store_true", help="Run deck/trump count optimization simulation")
+    args = parser.parse_args()
+
     try:
-        main()
+        if args.simulate:
+            run_all_simulations()
+        elif args.simulate_deck:
+            run_all_deck_simulations()
+        else:
+            main()
     except KeyboardInterrupt:
         print("\nInterrupted.")
         sys.exit(0)
