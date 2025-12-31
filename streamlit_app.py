@@ -15,6 +15,43 @@ from main import (
 
 st.set_page_config(page_title="coven", layout="wide")
 
+
+# ======= Authentication =======
+def check_password():
+    """Returns True if the user has entered the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == st.secrets["auth"]["password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    # First run or password not yet checked
+    if "password_correct" not in st.session_state:
+        st.text_input(
+            "Password", type="password", on_change=password_entered, key="password"
+        )
+        st.caption("Enter the password to access the game.")
+        return False
+
+    # Password incorrect
+    if not st.session_state["password_correct"]:
+        st.text_input(
+            "Password", type="password", on_change=password_entered, key="password"
+        )
+        st.error("Password incorrect. Please try again.")
+        return False
+
+    # Password correct
+    return True
+
+
+# Check authentication before showing the app
+if not check_password():
+    st.stop()
+
 # Sidebar - Rules Menu
 with st.sidebar:
     st.header("📖 メニュー")
