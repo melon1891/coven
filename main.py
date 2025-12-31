@@ -823,6 +823,376 @@ def main():
     print(f"\nLog written to: {LOG_PATH}")
 
 
+# ======= GameEngine for GUI =======
+
+@dataclass
+class InputRequest:
+    """Represents a request for human input."""
+    type: str  # "declaration", "seal", "choose_card", "upgrade", "worker_actions"
+    player: Player
+    context: Dict[str, Any]
+
+
+class GameEngine:
+    """State-machine based game engine for GUI integration."""
+
+    def __init__(self, seed: int = 42):
+        self.rng = random.Random(seed)
+        self.deal_seed = seed
+
+        self.players = [
+            Player("P1", is_bot=False, rng=random.Random(1)),
+            Player("P2", is_bot=True, rng=random.Random(2)),
+            Player("P3", is_bot=True, rng=random.Random(3)),
+            Player("P4", is_bot=True, rng=random.Random(4)),
+        ]
+
+        deal_fixed_sets(self.players, seed=self.deal_seed, logger=None)
+
+        self.round_no = 0
+        self.phase = "round_start"  # Current phase
+        self.sub_phase = None  # Sub-phase within a phase
+        self.revealed_upgrades: List[str] = []
+        self.ranked_players: List[Player] = []
+        self.upgrade_pick_index = 0
+
+        # Trick-taking state
+        self.set_index = 0
+        self.leader_index = 0
+        self.full_hands: Dict[str, List[Card]] = {}
+        self.playable_hands: Dict[str, List[Card]] = {}
+        self.sealed_by_player: Dict[str, List[Card]] = {}
+        self.current_trick = 0
+        self.trick_plays: List[Tuple[Player, Card]] = []
+        self.lead_card: Optional[Card] = None
+        self.trick_leader = 0
+        self.trick_player_offset = 0
+
+        # Worker placement state
+        self.wp_player_index = 0
+        self.wp_actions: List[str] = []
+
+        # Game log for display
+        self.log_messages: List[str] = []
+
+        self._pending_input: Optional[InputRequest] = None
+
+    def _log(self, msg: str):
+        self.log_messages.append(msg)
+
+    def get_state(self) -> Dict[str, Any]:
+        """Return current game state for display."""
+        return {
+            "round_no": self.round_no,
+            "phase": self.phase,
+            "sub_phase": self.sub_phase,
+            "players": snapshot_players(self.players),
+            "revealed_upgrades": self.revealed_upgrades[:],
+            "log": self.log_messages[-20:],  # Last 20 messages
+            "game_over": self.phase == "game_end",
+        }
+
+    def get_pending_input(self) -> Optional[InputRequest]:
+        """Return pending input request, or None if no input needed."""
+        return self._pending_input
+
+    def provide_input(self, response: Any) -> None:
+        """Provide response to pending input request."""
+        if self._pending_input is None:
+            return
+
+        req_type = self._pending_input.type
+        player = self._pending_input.player
+
+        if req_type == "declaration":
+            player.declared_tricks = response
+            self._log(f"{player.name} declares {response} tricks")
+            self._pending_input = None
+
+        elif req_type == "seal":
+            # response is list of Card objects
+            for c in response:
+                self.full_hands[player.name].remove(c)
+            self.sealed_by_player[player.name] = response
+            self.playable_hands[player.name] = self.full_hands[player.name][:]
+            self._log(f"{player.name} sealed: {', '.join(str(c) for c in response)}")
+            self._pending_input = None
+
+        elif req_type == "choose_card":
+            hand = self.playable_hands[player.name]
+            hand.remove(response)
+            self.trick_plays.append((player, response))
+            if self.lead_card is None:
+                self.lead_card = response
+            self._pending_input = None
+
+        elif req_type == "upgrade":
+            # response is upgrade string or "GOLD"
+            if response == "GOLD":
+                player.gold += TAKE_GOLD_INSTEAD
+                self._log(f"{player.name} takes {TAKE_GOLD_INSTEAD} gold")
+            else:
+                self.revealed_upgrades.remove(response)
+                apply_upgrade(player, response)
+                self._log(f"{player.name} takes: {upgrade_name(response)}")
+            self._pending_input = None
+
+        elif req_type == "worker_actions":
+            # response is list of action strings
+            self.wp_actions = response
+            delta = resolve_actions(player, response)
+            self._log(f"{player.name} actions: {response}")
+            self._pending_input = None
+
+    def step(self) -> bool:
+        """
+        Advance game state. Returns True if game continues, False if ended.
+        Will stop and return True when human input is needed.
+        """
+        if self._pending_input is not None:
+            return True  # Waiting for input
+
+        if self.phase == "game_end":
+            return False
+
+        # Phase: round_start
+        if self.phase == "round_start":
+            if self.round_no >= ROUNDS:
+                self._finish_game()
+                return False
+
+            self._log(f"=== Round {self.round_no + 1}/{ROUNDS} ===")
+            self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES)
+            self._log(f"Upgrades: {', '.join(upgrade_name(u) for u in self.revealed_upgrades)}")
+
+            self.set_index = self.round_no % SETS_PER_GAME
+            self.leader_index = self.round_no % len(self.players)
+
+            for p in self.players:
+                p.tricks_won_this_round = 0
+
+            self.full_hands = {p.name: p.sets[self.set_index][:] for p in self.players}
+            self.playable_hands = {}
+            self.sealed_by_player = {}
+
+            self.phase = "declaration"
+            self.sub_phase = 0  # Player index
+            return True
+
+        # Phase: declaration
+        if self.phase == "declaration":
+            player = self.players[self.sub_phase]
+            if player.is_bot:
+                player.declared_tricks = declare_tricks(player, self.full_hands[player.name][:], self.set_index)
+                self._log(f"{player.name} declares {player.declared_tricks} tricks")
+                self.sub_phase += 1
+            else:
+                self._pending_input = InputRequest(
+                    type="declaration",
+                    player=player,
+                    context={
+                        "hand": self.full_hands[player.name][:],
+                        "set_index": self.set_index,
+                    }
+                )
+                self.sub_phase += 1
+                return True
+
+            if self.sub_phase >= len(self.players):
+                self.phase = "seal"
+                self.sub_phase = 0
+            return True
+
+        # Phase: seal
+        if self.phase == "seal":
+            player = self.players[self.sub_phase]
+            hand = self.full_hands[player.name]
+
+            if player.is_bot:
+                sealed = seal_cards(player, hand, self.set_index)
+                self.sealed_by_player[player.name] = sealed
+                self.playable_hands[player.name] = hand[:]
+                self._log(f"{player.name} sealed: {', '.join(str(c) for c in sealed)}")
+                self.sub_phase += 1
+            else:
+                self._pending_input = InputRequest(
+                    type="seal",
+                    player=player,
+                    context={
+                        "hand": hand[:],
+                        "need_seal": CARDS_PER_SET - TRICKS_PER_ROUND,
+                    }
+                )
+                self.sub_phase += 1
+                return True
+
+            if self.sub_phase >= len(self.players):
+                self.phase = "trick"
+                self.current_trick = 0
+                self.trick_leader = self.leader_index
+                self._start_trick()
+            return True
+
+        # Phase: trick
+        if self.phase == "trick":
+            return self._process_trick()
+
+        # Phase: upgrade_pick
+        if self.phase == "upgrade_pick":
+            if self.upgrade_pick_index >= len(self.ranked_players):
+                # Give 4th place rescue gold
+                fourth = self.ranked_players[-1]
+                fourth.gold += RESCUE_GOLD_FOR_4TH
+                self._log(f"Rescue: {fourth.name} +{RESCUE_GOLD_FOR_4TH} gold")
+                self.phase = "worker_placement"
+                self.wp_player_index = 0
+                return True
+
+            player = self.ranked_players[self.upgrade_pick_index]
+            available = [u for u in self.revealed_upgrades if can_take_upgrade(player, u)]
+
+            if player.is_bot:
+                choice = choose_upgrade_or_gold(player, self.revealed_upgrades)
+                if choice == "GOLD":
+                    player.gold += TAKE_GOLD_INSTEAD
+                    self._log(f"{player.name} takes {TAKE_GOLD_INSTEAD} gold")
+                else:
+                    self.revealed_upgrades.remove(choice)
+                    apply_upgrade(player, choice)
+                    self._log(f"{player.name} takes: {upgrade_name(choice)}")
+                self.upgrade_pick_index += 1
+            else:
+                self._pending_input = InputRequest(
+                    type="upgrade",
+                    player=player,
+                    context={
+                        "available": available,
+                        "revealed": self.revealed_upgrades[:],
+                    }
+                )
+                self.upgrade_pick_index += 1
+                return True
+            return True
+
+        # Phase: worker_placement
+        if self.phase == "worker_placement":
+            if self.wp_player_index >= len(self.players):
+                self.phase = "wage_payment"
+                return True
+
+            player = self.players[self.wp_player_index]
+
+            if player.is_bot:
+                actions = choose_actions_for_player(player)
+                resolve_actions(player, actions)
+                self._log(f"{player.name} actions: {actions}")
+                self.wp_player_index += 1
+            else:
+                self._pending_input = InputRequest(
+                    type="worker_actions",
+                    player=player,
+                    context={
+                        "num_workers": player.basic_workers_total,
+                    }
+                )
+                self.wp_player_index += 1
+                return True
+            return True
+
+        # Phase: wage_payment
+        if self.phase == "wage_payment":
+            wage_rate = WAGE_CURVE[self.round_no]
+            self._log(f"--- Wage Payment (rate={wage_rate}) ---")
+
+            for p in self.players:
+                res = pay_wages_and_debt(p, wage_rate)
+                self._log(f"{p.name}: Gold {res['gold_before']}->{res['gold_after']}, VP {res['vp_before']}->{res['vp_after']}")
+
+            # Activate new hires
+            for p in self.players:
+                if p.basic_workers_new_hires > 0:
+                    p.basic_workers_total += p.basic_workers_new_hires
+                    p.basic_workers_new_hires = 0
+
+            self.round_no += 1
+            self.phase = "round_start"
+            return True
+
+        return True
+
+    def _start_trick(self):
+        """Initialize a new trick."""
+        self.trick_plays = []
+        self.lead_card = None
+        self.trick_player_offset = 0
+
+    def _process_trick(self) -> bool:
+        """Process trick phase. Returns True to continue."""
+        if self.trick_player_offset >= len(self.players):
+            # Trick complete
+            assert self.lead_card is not None
+            winner = trick_winner(self.lead_card.suit, self.trick_plays)
+            winner.tricks_won_this_round += 1
+            plays_str = " | ".join(f"{pl.name}:{c}" for pl, c in self.trick_plays)
+            self._log(f"Trick {self.current_trick + 1}: {plays_str} -> {winner.name} wins")
+
+            self.trick_leader = next(i for i, p in enumerate(self.players) if p.name == winner.name)
+            self.current_trick += 1
+
+            if self.current_trick >= TRICKS_PER_ROUND:
+                # All tricks done, apply declaration bonus
+                self._apply_declaration_bonus()
+                self.ranked_players = rank_players_for_upgrade(self.players, self.leader_index)
+                self.upgrade_pick_index = 0
+                self.phase = "upgrade_pick"
+            else:
+                self._start_trick()
+            return True
+
+        idx = (self.trick_leader + self.trick_player_offset) % len(self.players)
+        player = self.players[idx]
+        hand = self.playable_hands[player.name]
+
+        if player.is_bot:
+            chosen = choose_card(player, self.lead_card, hand)
+            hand.remove(chosen)
+            self.trick_plays.append((player, chosen))
+            if self.lead_card is None:
+                self.lead_card = chosen
+            self.trick_player_offset += 1
+        else:
+            legal = legal_cards(hand, self.lead_card)
+            self._pending_input = InputRequest(
+                type="choose_card",
+                player=player,
+                context={
+                    "hand": hand[:],
+                    "legal": legal,
+                    "lead_card": self.lead_card,
+                    "plays_so_far": [(p.name, str(c)) for p, c in self.trick_plays],
+                }
+            )
+            self.trick_player_offset += 1
+            return True
+        return True
+
+    def _apply_declaration_bonus(self):
+        """Apply declaration bonus to players who matched their declaration."""
+        for p in self.players:
+            if p.tricks_won_this_round == p.declared_tricks:
+                p.vp += DECLARATION_BONUS_VP
+                self._log(f"Declaration success: {p.name} matched {p.declared_tricks} -> +{DECLARATION_BONUS_VP} VP")
+
+    def _finish_game(self):
+        """Finalize game and determine winner."""
+        self.phase = "game_end"
+        players_sorted = sorted(self.players, key=lambda p: (p.vp, p.gold), reverse=True)
+        self._log("=== GAME OVER ===")
+        for i, p in enumerate(players_sorted, start=1):
+            self._log(f"{i}. {p.name} VP={p.vp} Gold={p.gold}")
+        self._log(f"Winner: {players_sorted[0].name}")
+
+
 if __name__ == "__main__":
     try:
         main()
