@@ -176,7 +176,7 @@ with st.sidebar:
         |------|------|
         | 交易拠点 改善 | TRADE収益 +1金（最大Lv2） |
         | 魔物討伐 改善 | HUNT収益 +1VP（最大Lv2） |
-        | 集団育成計画 | 雇用時に2人雇える |
+        | 見習い魔女派遣 | 即座にワーカー+2（即行動・給料発生） |
         | 育成負担軽減の護符 | 雇用ターンの給料軽減 |
         | 魔女カード | 特殊能力を獲得 |
 
@@ -333,7 +333,7 @@ for i, p in enumerate(state["players"]):
         st.text(f"Trade Lv{p['trade_level']} Hunt Lv{p['hunt_level']}")
         # Show recruit upgrade
         if p.get("recruit_upgrade"):
-            upgrade_short = {"RECRUIT_DOUBLE": "雇用×2", "RECRUIT_WAGE_DISCOUNT": "給料軽減"}.get(p["recruit_upgrade"], "")
+            upgrade_short = {"RECRUIT_WAGE_DISCOUNT": "給料軽減"}.get(p["recruit_upgrade"], "")
             st.text(f"📦 {upgrade_short}")
         # Show witches
         if p.get("witches"):
@@ -407,15 +407,20 @@ if pending is not None:
         need_seal = context["need_seal"]
         st.write(f"Select {need_seal} cards to seal (they won't be playable this round):")
 
-        hand_strs = [str(c) for c in hand]
-        selected = st.multiselect(
-            "Cards to seal:",
-            options=hand_strs,
-            max_selections=need_seal
-        )
+        # チェックボックスで各カードを選択（同じカードが複数あっても対応可能）
+        selected_indices = []
+        cols = st.columns(len(hand))
+        for i, card in enumerate(hand):
+            with cols[i]:
+                if st.checkbox(card_display(card), key=f"seal_{i}"):
+                    selected_indices.append(i)
 
-        if st.button("Seal Cards", type="primary", disabled=len(selected) != need_seal):
-            sealed_cards = [parse_card(s) for s in selected]
+        selected_count = len(selected_indices)
+        if selected_count != need_seal:
+            st.warning(f"{need_seal}枚選択してください（現在: {selected_count}枚）")
+
+        if st.button("Seal Cards", type="primary", disabled=selected_count != need_seal):
+            sealed_cards = [hand[i] for i in selected_indices]
             game.provide_input(sealed_cards)
             run_until_input()
             st.rerun()

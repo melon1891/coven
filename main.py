@@ -122,7 +122,7 @@ class Player:
     hunt_level: int = 0   # yield 1..3
 
     # Recruit upgrades (pick one of them, overwrite allowed)
-    recruit_upgrade: Optional[str] = None  # "RECRUIT_DOUBLE" or "RECRUIT_WAGE_DISCOUNT" or None
+    recruit_upgrade: Optional[str] = None  # "RECRUIT_WAGE_DISCOUNT" or None
 
     # Permanent witches (flavor for tie-break)
     witches: List[str] = field(default_factory=list)
@@ -241,7 +241,7 @@ def reveal_upgrades(rng: random.Random, n: int) -> List[str]:
     pool = (
         ["UP_TRADE"] * 6 +
         ["UP_HUNT"] * 6 +
-        ["RECRUIT_DOUBLE"] * 2 +
+        ["RECRUIT_INSTANT"] * 2 +
         ["RECRUIT_WAGE_DISCOUNT"] * 2 +
         ["WITCH_BLACKROAD", "WITCH_BLOODHUNT", "WITCH_HERD", "WITCH_RITUAL", "WITCH_BARRIER"]
     )
@@ -252,7 +252,7 @@ def upgrade_name(u: str) -> str:
     mapping = {
         "UP_TRADE": "交易拠点 改善（レベル+1）",
         "UP_HUNT": "魔物討伐 改善（レベル+1）",
-        "RECRUIT_DOUBLE": "集団育成計画（雇用×2）",
+        "RECRUIT_INSTANT": "見習い魔女派遣（即座に+2人）",
         "RECRUIT_WAGE_DISCOUNT": "育成負担軽減の護符（雇用ターン給料軽減）",
         "WITCH_BLACKROAD": "《黒路の魔女》",
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
@@ -268,7 +268,7 @@ def upgrade_description(u: str) -> str:
     descriptions = {
         "UP_TRADE": "交易アクションの収益が+1金貨増加します。最大レベル2まで強化可能。",
         "UP_HUNT": "討伐アクションの獲得VPが+1増加します。最大レベル2まで強化可能。",
-        "RECRUIT_DOUBLE": "雇用アクション時、1回で2人の見習いを雇用できるようになります。",
+        "RECRUIT_INSTANT": "即座に見習い2人が派遣されます。このターンから行動可能、給料も発生。",
         "RECRUIT_WAGE_DISCOUNT": "雇用したターンの給料支払いが軽減されます。",
         "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+1金",
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
@@ -327,7 +327,10 @@ def apply_upgrade(player: Player, u: str) -> None:
         player.trade_level = min(2, player.trade_level + 1)
     elif u == "UP_HUNT":
         player.hunt_level = min(2, player.hunt_level + 1)
-    elif u in ("RECRUIT_DOUBLE", "RECRUIT_WAGE_DISCOUNT"):
+    elif u == "RECRUIT_INSTANT":
+        # 即座にワーカー+2（このターンから使用可能、給料も発生）
+        player.basic_workers_total += 2
+    elif u == "RECRUIT_WAGE_DISCOUNT":
         player.recruit_upgrade = u
     elif u.startswith("WITCH_"):
         player.witches.append(u)
@@ -522,6 +525,7 @@ def legal_cards(hand: List[Card], lead_card: Optional[Card]) -> List[Card]:
         # リード時: 切り札以外を出せる
         non_trump = [c for c in hand if not c.is_trump()]
         # 切り札しか持っていない場合は切り札を出せる
+        print(f"DEBUG legal_cards: lead=None, hand={[str(c) for c in hand]}, non_trump={[str(c) for c in non_trump]}")
         return non_trump if non_trump else hand[:]
 
     lead_suit = lead_card.suit
@@ -759,10 +763,7 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
                 witch_bonuses.append("結界織りの魔女: +1VP (初回HUNT)")
             first_hunt_done = True
         elif a == "RECRUIT":
-            hires = 1
-            if player.recruit_upgrade == "RECRUIT_DOUBLE":
-                hires = 2
-            player.basic_workers_new_hires += hires
+            player.basic_workers_new_hires += 1
         else:
             raise ValueError(f"Unknown action: {a}")
 
