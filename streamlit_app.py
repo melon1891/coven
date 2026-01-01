@@ -10,7 +10,7 @@ import random
 from main import (
     GameEngine, Card, ROUNDS, TRICKS_PER_ROUND, CARDS_PER_SET,
     ACTIONS, TAKE_GOLD_INSTEAD, upgrade_name, upgrade_description, legal_cards,
-    WAGE_CURVE, UPGRADED_WAGE_CURVE
+    WAGE_CURVE, UPGRADED_WAGE_CURVE, STRATEGIES
 )
 
 st.set_page_config(page_title="coven", layout="wide")
@@ -323,6 +323,10 @@ for i, p in enumerate(state["players"]):
         name = p["name"]
         if not p["is_bot"]:
             name += " (You)"
+        else:
+            # CPUの性格を表示
+            if p.get("strategy_name"):
+                name += f" [{p['strategy_name']}]"
         st.markdown(f"**{name}**")
         st.text(f"Gold: {p['gold']}  VP: {p['vp']}")
         st.text(f"Workers: {p['workers']}")

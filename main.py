@@ -35,36 +35,112 @@ CARDS_PER_SET = 6                  # but see 6 cards, seal 2, play 4
 SETS_PER_GAME = 4
 REVEAL_UPGRADES = 5                # players + 1 (for 4p => 5)
 
-START_GOLD = 5
+START_GOLD = 7
 WAGE_CURVE = [1, 1, 2, 2]  # 初期ワーカーの給料（R4緩和: 3→2）
 UPGRADED_WAGE_CURVE = [1, 2, 3, 4]  # 雇用したワーカーの給料（全体緩和）
-INITIAL_WORKERS = 1  # 初期ワーカー数
+INITIAL_WORKERS = 2  # 初期ワーカー数
 RESCUE_GOLD_FOR_4TH = 2
 TAKE_GOLD_INSTEAD = 2
 DECLARATION_BONUS_VP = 1  # 宣言成功ボーナス（失敗ペナルティなし）
 
+# === 金貨→VP変換 ===
+GOLD_TO_VP_RATE = 2  # ゲーム終了時、2金貨 = 1VP に変換
+
+# === 負債ペナルティ設定 ===
+# 給与未払い1金につき何VPを失うか（2 = 1金不足で-2VP）
+DEBT_PENALTY_MULTIPLIER = 2
+# ペナルティ上限（None = 無制限）
+DEBT_PENALTY_CAP: Optional[int] = None
+
 ACTIONS = ["TRADE", "HUNT", "RECRUIT"]
 
+# === CPU性格定義 ===
+STRATEGIES = {
+    'CONSERVATIVE': {
+        'name': '堅実',
+        'name_en': 'Kenjitsu',
+        'desc': '安全プレイ、金貨優先',
+        'max_workers': 2,
+        'prefer_gold': True,
+        'hunt_ratio': 0.2,
+        'accept_debt': 0,
+    },
+    'VP_AGGRESSIVE': {
+        'name': 'VPつっぱ',
+        'name_en': 'VP Toppa',
+        'desc': 'ワーカー最大化、VP狩り',
+        'max_workers': 99,
+        'prefer_gold': False,
+        'hunt_ratio': 0.8,
+        'accept_debt': 99,
+    },
+    'BALANCED': {
+        'name': 'バランス',
+        'name_en': 'Balance',
+        'desc': '適度なワーカー、適度な借金',
+        'max_workers': 4,
+        'prefer_gold': False,
+        'hunt_ratio': 0.5,
+        'accept_debt': 4,
+    },
+    'DEBT_AVOID': {
+        'name': '借金回避',
+        'name_en': 'DebtAvoid',
+        'desc': 'ワーカー控えめ、金貨管理',
+        'max_workers': 3,
+        'prefer_gold': False,
+        'hunt_ratio': 0.4,
+        'accept_debt': 1,
+    },
+}
+
 LOG_PATH = "game_log.jsonl"
+
+
+def assign_random_strategy(rng: random.Random) -> str:
+    """CPUにランダムな性格を割り当てる"""
+    return rng.choice(list(STRATEGIES.keys()))
 
 
 # ======= Helper Functions =======
 
 def calculate_debt_penalty(debt: int) -> int:
     """
-    段階的な負債ペナルティを計算する。
-    1-3ゴールド: -1 VP
-    4-6ゴールド: -2 VP
-    7+ゴールド:  -3 VP（上限）
+    負債ペナルティを計算する。
+    デフォルト: 1金不足につき DEBT_PENALTY_MULTIPLIER VP のペナルティ
+    DEBT_PENALTY_CAP が設定されている場合はその値が上限
     """
     if debt <= 0:
         return 0
-    elif debt <= 3:
-        return 1
-    elif debt <= 6:
-        return 2
-    else:
-        return 3
+    penalty = debt * DEBT_PENALTY_MULTIPLIER
+    if DEBT_PENALTY_CAP is not None:
+        penalty = min(penalty, DEBT_PENALTY_CAP)
+    return penalty
+
+
+def calculate_debt_penalty_configurable(
+    debt: int,
+    multiplier: int = 1,
+    cap: Optional[int] = None,
+    use_tiered: bool = False
+) -> int:
+    """
+    設定可能な負債ペナルティを計算する。
+
+    Args:
+        debt: 不足金額
+        multiplier: 1金あたりのVPペナルティ倍率
+        cap: ペナルティ上限（Noneで無制限）
+        use_tiered: Trueで現行の段階式を使用
+    """
+    if debt <= 0:
+        return 0
+    if use_tiered:
+        return calculate_debt_penalty(debt)
+    penalty = debt * multiplier
+    if cap is not None:
+        penalty = min(penalty, cap)
+    return penalty
 
 
 # ======= Logger =======
@@ -109,12 +185,13 @@ class Player:
     name: str
     is_bot: bool = False
     rng: random.Random = field(default_factory=random.Random)
+    strategy: Optional[str] = None  # CPU性格: CONSERVATIVE, VP_AGGRESSIVE, BALANCED, DEBT_AVOID
 
     gold: int = START_GOLD
     vp: int = 0
 
     # Workers
-    basic_workers_total: int = 1
+    basic_workers_total: int = INITIAL_WORKERS
     basic_workers_new_hires: int = 0  # hires that become active next round
 
     # Action levels (incremental improvements, 0..2)
@@ -153,6 +230,8 @@ def snapshot_players(players: List[Player]) -> List[Dict[str, Any]]:
         snap.append({
             "name": p.name,
             "is_bot": p.is_bot,
+            "strategy": p.strategy,
+            "strategy_name": STRATEGIES[p.strategy]['name'] if p.strategy else None,
             "gold": p.gold,
             "vp": p.vp,
             "workers": p.basic_workers_total,
@@ -336,26 +415,61 @@ def apply_upgrade(player: Player, u: str) -> None:
         player.witches.append(u)
 
 
-def choose_upgrade_or_gold(player: Player, revealed: List[str]) -> str:
+def calc_expected_wage(player: Player, round_no: int) -> int:
+    """次のラウンドで発生する給料を計算"""
+    workers = player.basic_workers_total + player.basic_workers_new_hires
+    init_count = min(INITIAL_WORKERS, workers)
+    hired_count = workers - init_count
+    return (init_count * WAGE_CURVE[round_no]) + (hired_count * UPGRADED_WAGE_CURVE[round_no])
+
+
+def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 0) -> str:
     available = [u for u in revealed if can_take_upgrade(player, u)]
 
     if player.is_bot:
         if not available:
             return "GOLD"
-        if player.rng.random() < 0.75:
-            prefs: List[Tuple[int, str]] = []
+
+        # 性格に基づいた選択
+        strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
+        current_workers = player.basic_workers_total + player.basic_workers_new_hires
+        expected_wage = calc_expected_wage(player, round_no)
+
+        # 堅実: 常に金貨優先
+        if strat['prefer_gold']:
+            return "GOLD"
+
+        # VPつっぱ: 常にアップグレード優先
+        if player.strategy == 'VP_AGGRESSIVE':
+            if 'RECRUIT_INSTANT' in available and current_workers < strat['max_workers']:
+                return 'RECRUIT_INSTANT'
             for u in available:
-                if u in ("UP_TRADE", "UP_HUNT"):
-                    prefs.append((3, u))
-                elif u.startswith("RECRUIT"):
-                    prefs.append((2, u))
-                elif u.startswith("WITCH"):
-                    prefs.append((1, u))
-                else:
-                    prefs.append((0, u))
-            prefs.sort(reverse=True)
-            return prefs[0][1]
-        return "GOLD"
+                if u.startswith('UP_') or u.startswith('WITCH_'):
+                    return u
+            return 'GOLD'
+
+        # 借金回避: 金貨が足りなければ金貨を取る
+        if player.strategy == 'DEBT_AVOID':
+            if player.gold < expected_wage + 3:
+                return 'GOLD'
+
+        # バランス/借金回避: ワーカー上限まで雇用、それ以外はアップグレード
+        if current_workers < strat['max_workers']:
+            if 'RECRUIT_INSTANT' in available:
+                return 'RECRUIT_INSTANT'
+
+        # アップグレード優先度
+        for u in available:
+            if u.startswith('UP_HUNT'):
+                return u
+            if u.startswith('UP_TRADE'):
+                return u
+
+        for u in available:
+            if u.startswith('WITCH_'):
+                return u
+
+        return 'GOLD'
 
     print(f"\n{player.name}, choose your reward:")
     if available:
@@ -525,7 +639,6 @@ def legal_cards(hand: List[Card], lead_card: Optional[Card]) -> List[Card]:
         # リード時: 切り札以外を出せる
         non_trump = [c for c in hand if not c.is_trump()]
         # 切り札しか持っていない場合は切り札を出せる
-        print(f"DEBUG legal_cards: lead=None, hand={[str(c) for c in hand]}, non_trump={[str(c) for c in non_trump]}")
         return non_trump if non_trump else hand[:]
 
     lead_suit = lead_card.suit
@@ -720,16 +833,41 @@ def rank_players_for_upgrade(players: List[Player], leader_index: int) -> List[P
 
 # ======= Worker Placement =======
 
-def choose_actions_for_player(player: Player) -> List[str]:
+def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
     n = player.basic_workers_total
     actions: List[str] = []
 
     if player.is_bot:
+        strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
+        expected_wage = calc_expected_wage(player, round_no)
+        gold_needed = expected_wage - player.gold
+
         for _ in range(n):
-            if player.gold < 3:
+            if player.strategy == 'CONSERVATIVE':
+                # 堅実: 常にTRADE
                 actions.append("TRADE")
-            else:
-                actions.append(player.rng.choice(["HUNT", "TRADE", "RECRUIT"]))
+            elif player.strategy == 'VP_AGGRESSIVE':
+                # VPつっぱ: 高確率でHUNT
+                if player.rng.random() < strat['hunt_ratio']:
+                    actions.append("HUNT")
+                else:
+                    actions.append("TRADE")
+            elif player.strategy == 'DEBT_AVOID':
+                # 借金回避: まず給料分を確保、余剰でHUNT
+                if gold_needed > 0:
+                    actions.append("TRADE")
+                    gold_needed -= player.trade_yield()
+                else:
+                    if player.rng.random() < strat['hunt_ratio']:
+                        actions.append("HUNT")
+                    else:
+                        actions.append("TRADE")
+            else:  # BALANCED
+                # バランス: 確率でHUNT/TRADE
+                if player.rng.random() < strat['hunt_ratio']:
+                    actions.append("HUNT")
+                else:
+                    actions.append("TRADE")
         return actions
 
     print(f"\n{player.name} chooses actions for {n} apprentices.")
@@ -847,12 +985,20 @@ def main():
     rng = random.Random(42)
     deal_seed = 42
 
+    # CPUにランダムな性格を割り当て
+    bot_rng = random.Random()  # 毎回異なるシードで性格を決定
     players = [
         Player("P1", is_bot=False, rng=random.Random(1)),
-        Player("P2", is_bot=True,  rng=random.Random(2)),
-        Player("P3", is_bot=True,  rng=random.Random(3)),
-        Player("P4", is_bot=True,  rng=random.Random(4)),
+        Player("P2", is_bot=True,  rng=random.Random(2), strategy=assign_random_strategy(bot_rng)),
+        Player("P3", is_bot=True,  rng=random.Random(3), strategy=assign_random_strategy(bot_rng)),
+        Player("P4", is_bot=True,  rng=random.Random(4), strategy=assign_random_strategy(bot_rng)),
     ]
+
+    # CPU性格を表示
+    for p in players:
+        if p.is_bot and p.strategy:
+            strat = STRATEGIES[p.strategy]
+            print(f"  {p.name}: {strat['name']} ({strat['name_en']})")
 
     logger.log("game_start", {
         "config": {
@@ -865,7 +1011,8 @@ def main():
             "START_GOLD": START_GOLD,
             "WAGE_CURVE": WAGE_CURVE,
             "UPGRADED_WAGE_CURVE": UPGRADED_WAGE_CURVE,
-            "DEBT_PENALTY_TIERED": True,
+            "DEBT_PENALTY_MULTIPLIER": DEBT_PENALTY_MULTIPLIER,
+            "DEBT_PENALTY_CAP": DEBT_PENALTY_CAP,
             "RESCUE_GOLD_FOR_4TH": RESCUE_GOLD_FOR_4TH,
             "TAKE_GOLD_INSTEAD": TAKE_GOLD_INSTEAD,
             "DECLARATION_BONUS_VP": DECLARATION_BONUS_VP,
@@ -903,7 +1050,7 @@ def main():
 
         for p in ranked:
             before = snapshot_players([p])[0]
-            choice = choose_upgrade_or_gold(p, revealed)
+            choice = choose_upgrade_or_gold(p, revealed, round_no)
 
             if choice == "GOLD":
                 p.gold += TAKE_GOLD_INSTEAD
@@ -946,7 +1093,7 @@ def main():
         print("\n--- Worker Placement ---")
         logger.log("wp_start", {"round": round_no + 1, "players": snapshot_players(players)})
         for p in players:
-            actions = choose_actions_for_player(p)
+            actions = choose_actions_for_player(p, round_no)
             delta = resolve_actions(p, actions)
             print(f"{p.name} actions={actions} => Gold={p.gold}, VP={p.vp}, NewHires={p.basic_workers_new_hires}")
             logger.log("wp_actions", {
@@ -959,7 +1106,8 @@ def main():
 
         initial_rate = WAGE_CURVE[round_no]
         upgraded_rate = UPGRADED_WAGE_CURVE[round_no]
-        print(f"\n--- Wage Payment (初期={initial_rate}, 雇用={upgraded_rate}) and Debt (-{DEBT_VP_PENALTY_PER_GOLD}VP/gold) ---")
+        cap_info = f"上限{DEBT_PENALTY_CAP}" if DEBT_PENALTY_CAP else "無制限"
+        print(f"\n--- Wage Payment (初期={initial_rate}, 雇用={upgraded_rate}) and Debt (-{DEBT_PENALTY_MULTIPLIER}VP/金, {cap_info}) ---")
         logger.log("wage_phase_start", {"round": round_no + 1, "initial_wage_rate": initial_rate, "upgraded_wage_rate": upgraded_rate, "players": snapshot_players(players)})
 
         for p in players:
@@ -988,6 +1136,14 @@ def main():
                 })
 
         logger.log("round_end", {"round": round_no + 1, "players": snapshot_players(players)})
+
+    # ゲーム終了時: 金貨をVPに変換
+    print("\n--- 金貨→VP変換 ---")
+    for p in players:
+        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        if bonus_vp > 0:
+            print(f"{p.name}: {p.gold}G → +{bonus_vp}VP")
+            p.vp += bonus_vp
 
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
     logger.log("game_end", {
@@ -1022,11 +1178,13 @@ class GameEngine:
         self.rng = random.Random(seed)
         self.deal_seed = seed
 
+        # CPUにランダムな性格を割り当て
+        bot_rng = random.Random()
         self.players = [
             Player("P1", is_bot=False, rng=random.Random(1)),
-            Player("P2", is_bot=True, rng=random.Random(2)),
-            Player("P3", is_bot=True, rng=random.Random(3)),
-            Player("P4", is_bot=True, rng=random.Random(4)),
+            Player("P2", is_bot=True, rng=random.Random(2), strategy=assign_random_strategy(bot_rng)),
+            Player("P3", is_bot=True, rng=random.Random(3), strategy=assign_random_strategy(bot_rng)),
+            Player("P4", is_bot=True, rng=random.Random(4), strategy=assign_random_strategy(bot_rng)),
         ]
 
         deal_fixed_sets(self.players, seed=self.deal_seed, logger=None)
@@ -1259,7 +1417,7 @@ class GameEngine:
             available = [u for u in self.revealed_upgrades if can_take_upgrade(player, u)]
 
             if player.is_bot:
-                choice = choose_upgrade_or_gold(player, self.revealed_upgrades)
+                choice = choose_upgrade_or_gold(player, self.revealed_upgrades, self.round_no)
                 if choice == "GOLD":
                     player.gold += TAKE_GOLD_INSTEAD
                     self._log(f"{player.name} takes {TAKE_GOLD_INSTEAD} gold")
@@ -1290,7 +1448,7 @@ class GameEngine:
             player = self.players[self.wp_player_index]
 
             if player.is_bot:
-                actions = choose_actions_for_player(player)
+                actions = choose_actions_for_player(player, self.round_no)
                 resolve_actions(player, actions)
                 self._log(f"{player.name} actions: {actions}")
                 self.wp_player_index += 1
@@ -1407,6 +1565,14 @@ class GameEngine:
 
     def _finish_game(self):
         """Finalize game and determine winner."""
+        # 金貨→VP変換
+        self._log("--- Gold to VP conversion ---")
+        for p in self.players:
+            bonus_vp = p.gold // GOLD_TO_VP_RATE
+            if bonus_vp > 0:
+                self._log(f"{p.name}: {p.gold}G -> +{bonus_vp}VP")
+                p.vp += bonus_vp
+
         self.phase = "game_end"
         players_sorted = sorted(self.players, key=lambda p: (p.vp, p.gold), reverse=True)
         self._log("=== GAME OVER ===")
@@ -1425,11 +1591,13 @@ def run_single_game_quiet(
     """Run a single game with all bots, no output. Returns final scores."""
     rng = random.Random(seed)
 
+    # CPUにランダムな性格を割り当て
+    bot_rng = random.Random(seed + 100)
     players = [
-        Player("P1", is_bot=True, rng=random.Random(seed + 1)),
-        Player("P2", is_bot=True, rng=random.Random(seed + 2)),
-        Player("P3", is_bot=True, rng=random.Random(seed + 3)),
-        Player("P4", is_bot=True, rng=random.Random(seed + 4)),
+        Player("P1", is_bot=True, rng=random.Random(seed + 1), strategy=assign_random_strategy(bot_rng)),
+        Player("P2", is_bot=True, rng=random.Random(seed + 2), strategy=assign_random_strategy(bot_rng)),
+        Player("P3", is_bot=True, rng=random.Random(seed + 3), strategy=assign_random_strategy(bot_rng)),
+        Player("P4", is_bot=True, rng=random.Random(seed + 4), strategy=assign_random_strategy(bot_rng)),
     ]
 
     deal_fixed_sets(players, seed=seed, logger=None, max_rank=max_rank,
@@ -1482,7 +1650,7 @@ def run_single_game_quiet(
         # Upgrade pick
         ranked = rank_players_for_upgrade(players, leader_index)
         for p in ranked:
-            choice = choose_upgrade_or_gold(p, revealed)
+            choice = choose_upgrade_or_gold(p, revealed, round_no)
             if choice == "GOLD":
                 p.gold += TAKE_GOLD_INSTEAD
             else:
@@ -1494,7 +1662,7 @@ def run_single_game_quiet(
 
         # Worker placement
         for p in players:
-            actions = choose_actions_for_player(p)
+            actions = choose_actions_for_player(p, round_no)
             resolve_actions(p, actions)
 
         # Wage payment
@@ -1506,6 +1674,11 @@ def run_single_game_quiet(
             if p.basic_workers_new_hires > 0:
                 p.basic_workers_total += p.basic_workers_new_hires
                 p.basic_workers_new_hires = 0
+
+    # Gold to VP conversion at end
+    for p in players:
+        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        p.vp += bonus_vp
 
     # Return results
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
@@ -1542,12 +1715,16 @@ def run_simulation(max_rank: int, num_games: int = 100) -> Dict[str, Any]:
 
 
 def run_all_simulations():
-    """Run simulations for rank ranges 4-10, 100 games each."""
+    """Run simulations for rank ranges 6-10, 100 games each.
+
+    Note: max_rank must be at least 6 for 4 decks to have enough cards.
+    4 decks * 4 suits * 6 ranks = 96 cards + 8 trump = 104 total (need 96 for 4p*4r*6c)
+    """
     print("=== カードランク最適化シミュレーション ===")
     print(f"各設定で100ゲーム実行中...\n")
 
     results = []
-    for max_rank in range(4, 11):
+    for max_rank in range(6, 11):
         print(f"ランク1-{max_rank} をテスト中...", end=" ", flush=True)
         result = run_simulation(max_rank, num_games=100)
         results.append(result)
@@ -1622,11 +1799,349 @@ def run_all_deck_simulations():
     print(f"\n推奨: {best['num_decks']}デッキ")
 
 
+# ======= Debt Penalty Simulation =======
+
+def choose_actions_smart_bot(
+    player: Player,
+    round_no: int,
+    debt_multiplier: int,
+    debt_cap: Optional[int],
+) -> List[str]:
+    """
+    賢いボット: 給料支払いを考慮してアクション選択。
+
+    戦略:
+    1. 今ラウンドの給料を計算
+    2. TRADEで稼げる額を計算
+    3. 借金回避に必要なTRADE数を決定
+    4. 余ったワーカーでHUNT/RECRUITを選択（VP期待値 vs 借金ペナルティ）
+    """
+    n = player.basic_workers_total
+    actions: List[str] = []
+
+    # 現在のゴールド
+    current_gold = player.gold
+
+    # 今ラウンドの給料を予測（新規雇用なしと仮定）
+    initial_wage_rate = WAGE_CURVE[round_no]
+    upgraded_wage_rate = UPGRADED_WAGE_CURVE[round_no]
+    initial_workers_count = min(INITIAL_WORKERS, n)
+    upgraded_workers_count = n - initial_workers_count
+    expected_wage = (initial_workers_count * initial_wage_rate) + (upgraded_workers_count * upgraded_wage_rate)
+
+    # TRADEで稼げる額
+    trade_yield = player.trade_yield()
+    if "WITCH_BLACKROAD" in player.witches:
+        trade_yield += 1
+
+    # HUNTで稼げるVP
+    hunt_yield = player.hunt_yield()
+    if "WITCH_BLOODHUNT" in player.witches:
+        hunt_yield += 1
+
+    # 借金1金あたりのペナルティ
+    penalty_per_gold = debt_multiplier
+
+    # 給料を払うために必要なTRADE数
+    gold_needed = max(0, expected_wage - current_gold)
+    trades_needed = (gold_needed + trade_yield - 1) // trade_yield if trade_yield > 0 else n
+    trades_needed = min(trades_needed, n)
+
+    # 戦略決定: HUNT vs TRADE の損益分岐
+    # HUNT: +hunt_yield VP
+    # TRADE: +trade_yield gold (借金回避)
+    # 借金1金 = -penalty_per_gold VP
+    #
+    # HUNTが得になる条件: hunt_yield > trade_yield * penalty_per_gold / (実際に節約できるペナルティ)
+
+    for i in range(n):
+        if i < trades_needed:
+            # 必要最低限のTRADE
+            actions.append("TRADE")
+        else:
+            # 余剰ワーカー: HUNT vs 追加TRADE
+            # HUNTのVP vs 追加で借金を減らせる価値
+            #
+            # 現在の予測: trades_needed回TRADEした後のゴールド
+            projected_gold = current_gold + trades_needed * trade_yield
+            projected_shortfall = max(0, expected_wage - projected_gold)
+
+            if projected_shortfall > 0:
+                # まだ借金が発生する → 追加TRADEの価値を計算
+                # 追加TRADE: 借金がtrade_yield減る → ペナルティがtrade_yield * penalty_per_gold減る
+                saved_penalty = min(trade_yield, projected_shortfall) * penalty_per_gold
+                if debt_cap is not None:
+                    # 上限ありの場合、すでに上限に達していたら追加TRADEの価値は低い
+                    current_penalty = min(projected_shortfall * penalty_per_gold, debt_cap)
+                    new_shortfall = max(0, projected_shortfall - trade_yield)
+                    new_penalty = min(new_shortfall * penalty_per_gold, debt_cap) if new_shortfall > 0 else 0
+                    saved_penalty = current_penalty - new_penalty
+
+                if hunt_yield > saved_penalty:
+                    # HUNTの方が得
+                    actions.append("HUNT")
+                else:
+                    # TRADEの方が得
+                    actions.append("TRADE")
+                    trades_needed += 1  # 次のループ用に更新
+            else:
+                # 借金なし → HUNT or RECRUIT
+                # 簡易判定: HUNTを優先（VPが直接増える）
+                if player.rng.random() < 0.8:
+                    actions.append("HUNT")
+                else:
+                    actions.append("RECRUIT")
+
+    return actions
+
+
+def run_single_game_with_debt_config(
+    seed: int,
+    debt_multiplier: int = 1,
+    debt_cap: Optional[int] = None,
+    use_tiered: bool = False,
+) -> Dict[str, Any]:
+    """Run a single game with configurable debt penalty. Returns detailed stats."""
+    rng = random.Random(seed)
+
+    # CPUにランダムな性格を割り当て
+    bot_rng = random.Random(seed + 100)
+    players = [
+        Player("P1", is_bot=True, rng=random.Random(seed + 1), strategy=assign_random_strategy(bot_rng)),
+        Player("P2", is_bot=True, rng=random.Random(seed + 2), strategy=assign_random_strategy(bot_rng)),
+        Player("P3", is_bot=True, rng=random.Random(seed + 3), strategy=assign_random_strategy(bot_rng)),
+        Player("P4", is_bot=True, rng=random.Random(seed + 4), strategy=assign_random_strategy(bot_rng)),
+    ]
+
+    deal_fixed_sets(players, seed=seed, logger=None, max_rank=6, num_decks=4)
+
+    # Track debt occurrences
+    total_debt_events = 0
+    total_debt_amount = 0
+    total_debt_penalty = 0
+
+    for round_no in range(ROUNDS):
+        revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
+        set_index = round_no % SETS_PER_GAME
+        leader_index = round_no % len(players)
+
+        for p in players:
+            p.tricks_won_this_round = 0
+
+        # Declaration
+        full_hands = {p.name: p.sets[set_index][:] for p in players}
+        for p in players:
+            p.declared_tricks = declare_tricks(p, full_hands[p.name][:], set_index)
+
+        # Seal
+        playable_hands = {}
+        for p in players:
+            hand = full_hands[p.name]
+            seal_cards(p, hand, set_index)
+            playable_hands[p.name] = hand[:]
+
+        # Play tricks
+        leader = leader_index
+        for trick_idx in range(TRICKS_PER_ROUND):
+            plays: List[Tuple[Player, Card]] = []
+            lead_card: Optional[Card] = None
+            for offset in range(len(players)):
+                idx = (leader + offset) % len(players)
+                pl = players[idx]
+                hand = playable_hands[pl.name]
+                chosen = choose_card(pl, lead_card, hand)
+                hand.remove(chosen)
+                plays.append((pl, chosen))
+                if lead_card is None:
+                    lead_card = chosen
+            assert lead_card is not None
+            winner = trick_winner(lead_card.suit, plays)
+            winner.tricks_won_this_round += 1
+            leader = next(i for i, pp in enumerate(players) if pp.name == winner.name)
+
+        # Declaration bonus
+        for p in players:
+            if p.tricks_won_this_round == p.declared_tricks:
+                p.vp += DECLARATION_BONUS_VP
+
+        # Upgrade pick
+        ranked = rank_players_for_upgrade(players, leader_index)
+        for p in ranked:
+            choice = choose_upgrade_or_gold(p, revealed, round_no)
+            if choice == "GOLD":
+                p.gold += TAKE_GOLD_INSTEAD
+            else:
+                revealed.remove(choice)
+                apply_upgrade(p, choice)
+
+        fourth = ranked[-1]
+        fourth.gold += RESCUE_GOLD_FOR_4TH
+
+        # Worker placement (with smart bot that considers debt penalty)
+        for p in players:
+            if use_tiered:
+                # 段階式の場合、ペナルティが軽いので借金回避意識が低い
+                actions = choose_actions_smart_bot(p, round_no, 1, 3)  # 実質max 3VP
+            else:
+                actions = choose_actions_smart_bot(p, round_no, debt_multiplier, debt_cap)
+            resolve_actions(p, actions)
+
+        # Wage payment with configurable debt penalty
+        for p in players:
+            workers_active = p.basic_workers_total
+            workers_hired_this_round = p.basic_workers_new_hires
+            workers_paid = workers_active + workers_hired_this_round
+
+            initial_wage_rate = WAGE_CURVE[round_no]
+            upgraded_wage_rate = UPGRADED_WAGE_CURVE[round_no]
+
+            initial_workers_count = min(INITIAL_WORKERS, workers_paid)
+            upgraded_workers_count = workers_paid - initial_workers_count
+
+            wage_gross = (initial_workers_count * initial_wage_rate) + (upgraded_workers_count * upgraded_wage_rate)
+
+            discount = 0
+            if p.recruit_upgrade == "RECRUIT_WAGE_DISCOUNT":
+                discount = workers_hired_this_round
+            if "WITCH_HERD" in p.witches and workers_hired_this_round > 0:
+                discount += 1
+
+            wage_net = max(0, wage_gross - discount)
+            short = max(0, wage_net - p.gold)
+
+            if p.gold >= wage_net:
+                p.gold -= wage_net
+            else:
+                p.gold = 0
+                # Use configurable debt penalty
+                debt_penalty = calculate_debt_penalty_configurable(
+                    short, debt_multiplier, debt_cap, use_tiered
+                )
+                p.vp -= debt_penalty
+                total_debt_events += 1
+                total_debt_amount += short
+                total_debt_penalty += debt_penalty
+
+        # Activate hires
+        for p in players:
+            if p.basic_workers_new_hires > 0:
+                p.basic_workers_total += p.basic_workers_new_hires
+                p.basic_workers_new_hires = 0
+
+    # Gold to VP conversion at end
+    for p in players:
+        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        p.vp += bonus_vp
+
+    # Return results
+    players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
+    vps = [p.vp for p in players_sorted]
+    return {
+        "winner": players_sorted[0].name,
+        "vps": vps,
+        "winner_vp": vps[0],
+        "vp_diff_1st_2nd": vps[0] - vps[1],
+        "vp_diff_1st_last": vps[0] - vps[-1],
+        "debt_events": total_debt_events,
+        "total_debt_amount": total_debt_amount,
+        "total_debt_penalty": total_debt_penalty,
+    }
+
+
+def run_debt_penalty_simulation(
+    debt_multiplier: int,
+    debt_cap: Optional[int],
+    use_tiered: bool,
+    num_games: int = 100
+) -> Dict[str, Any]:
+    """Run simulation with specific debt penalty config."""
+    results = []
+    for game_id in range(num_games):
+        seed = game_id * 1000
+        result = run_single_game_with_debt_config(
+            seed, debt_multiplier, debt_cap, use_tiered
+        )
+        results.append(result)
+
+    # Calculate statistics
+    winner_vps = [r["winner_vp"] for r in results]
+    vp_diffs = [r["vp_diff_1st_2nd"] for r in results]
+    debt_events = [r["debt_events"] for r in results]
+    debt_amounts = [r["total_debt_amount"] for r in results]
+
+    games_with_debt = sum(1 for d in debt_events if d > 0)
+
+    return {
+        "debt_multiplier": debt_multiplier,
+        "debt_cap": debt_cap,
+        "use_tiered": use_tiered,
+        "num_games": num_games,
+        "avg_winner_vp": sum(winner_vps) / len(winner_vps),
+        "avg_vp_diff": sum(vp_diffs) / len(vp_diffs),
+        "std_vp_diff": (sum((x - sum(vp_diffs)/len(vp_diffs)) ** 2 for x in vp_diffs) / len(vp_diffs)) ** 0.5,
+        "debt_rate": games_with_debt / num_games,
+        "avg_debt_events": sum(debt_events) / len(debt_events),
+        "avg_debt_amount": sum(debt_amounts) / len(debt_amounts) if sum(debt_amounts) > 0 else 0,
+    }
+
+
+def run_all_debt_penalty_simulations():
+    """Run simulations for different debt penalty configurations."""
+    print("=== 負債ペナルティ最適化シミュレーション ===")
+    print(f"各設定で100ゲーム実行中...\n")
+
+    configs = [
+        {"name": "現行(段階式)", "multiplier": 0, "cap": None, "use_tiered": True},
+        {"name": "1x無制限", "multiplier": 1, "cap": None, "use_tiered": False},
+        {"name": "2x無制限", "multiplier": 2, "cap": None, "use_tiered": False},
+        {"name": "3x無制限", "multiplier": 3, "cap": None, "use_tiered": False},
+        {"name": "3x上限9", "multiplier": 3, "cap": 9, "use_tiered": False},
+        {"name": "3x上限12", "multiplier": 3, "cap": 12, "use_tiered": False},
+        {"name": "4x無制限", "multiplier": 4, "cap": None, "use_tiered": False},
+        {"name": "5x無制限", "multiplier": 5, "cap": None, "use_tiered": False},
+    ]
+
+    results = []
+    for cfg in configs:
+        print(f"{cfg['name']} をテスト中...", end=" ", flush=True)
+        result = run_debt_penalty_simulation(
+            cfg["multiplier"], cfg["cap"], cfg["use_tiered"], num_games=100
+        )
+        result["name"] = cfg["name"]
+        results.append(result)
+        print(f"完了 (勝者VP: {result['avg_winner_vp']:.1f}, VP差: {result['avg_vp_diff']:.1f}, 負債率: {result['debt_rate']*100:.0f}%)")
+
+    print("\n" + "=" * 90)
+    print("=== シミュレーション結果 ===")
+    print("=" * 90)
+    print(f"{'設定':<14} {'勝者VP':<10} {'1-2位差':<10} {'標準偏差':<10} {'負債率':<10} {'平均負債額':<10}")
+    print("-" * 90)
+
+    # Best = lowest VP diff with reasonable debt rate (10-40%)
+    viable = [r for r in results if 0.05 <= r["debt_rate"] <= 0.50]
+    if viable:
+        best = min(viable, key=lambda r: r["avg_vp_diff"])
+    else:
+        best = min(results, key=lambda r: r["avg_vp_diff"])
+
+    for r in results:
+        marker = " ★" if r == best else ""
+        cap_str = str(r["debt_cap"]) if r["debt_cap"] else "∞"
+        print(f"{r['name']:<14} {r['avg_winner_vp']:<10.1f} {r['avg_vp_diff']:<10.1f} {r['std_vp_diff']:<10.1f} {r['debt_rate']*100:<9.0f}% {r['avg_debt_amount']:<10.1f}{marker}")
+
+    print("-" * 90)
+    print(f"\n推奨: {best['name']}")
+    print(f"  - 勝者平均VP: {best['avg_winner_vp']:.1f}")
+    print(f"  - 1-2位VP差: {best['avg_vp_diff']:.1f}")
+    print(f"  - 負債発生率: {best['debt_rate']*100:.0f}%")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="魔女協会 Card Game")
     parser.add_argument("--simulate", action="store_true", help="Run rank optimization simulation")
     parser.add_argument("--simulate-deck", action="store_true", help="Run deck/trump count optimization simulation")
+    parser.add_argument("--simulate-debt-penalty", action="store_true", help="Run debt penalty optimization simulation")
     args = parser.parse_args()
 
     try:
@@ -1634,6 +2149,8 @@ if __name__ == "__main__":
             run_all_simulations()
         elif args.simulate_deck:
             run_all_deck_simulations()
+        elif args.simulate_debt_penalty:
+            run_all_debt_penalty_simulations()
         else:
             main()
     except KeyboardInterrupt:

@@ -45,7 +45,8 @@ The game runs 4 rounds, each with these phases:
 - `UPGRADED_WAGE_CURVE = [1, 2, 3, 4]` - Hired worker wages per round
 - `START_GOLD = 5`
 - `DECLARATION_BONUS_VP = 1` (no failure penalty)
-- `calculate_debt_penalty(debt)` - Tiered: 1-3G=-1VP, 4-6G=-2VP, 7+=-3VP
+- `DEBT_PENALTY_MULTIPLIER = 3` - VP penalty per 1 gold debt (default: 3)
+- `DEBT_PENALTY_CAP = None` - Max penalty cap (None = unlimited)
 
 ### Bot Logic
 
@@ -60,3 +61,16 @@ When playing as human, enter cards as `{suit}{rank}`:
 ## Logging
 
 All game events are logged to `game_log.jsonl` in JSONL format with timestamps, game IDs, and full state snapshots. Useful for game balance analysis.
+
+## Simulation Commands
+
+```bash
+# Card rank optimization simulation
+uv run python main.py --simulate
+
+# Deck count optimization simulation
+uv run python main.py --simulate-deck
+
+# Debt penalty optimization simulation
+uv run python main.py --simulate-debt-penalty
+```
