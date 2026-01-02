@@ -8,9 +8,11 @@ Run with: uv run streamlit run streamlit_app.py
 import streamlit as st
 import random
 from main import (
-    GameEngine, Card, ROUNDS, TRICKS_PER_ROUND, CARDS_PER_SET,
+    GameEngine, GameConfig, Card, ROUNDS, TRICKS_PER_ROUND, CARDS_PER_SET,
     ACTIONS, TAKE_GOLD_INSTEAD, upgrade_name, upgrade_description, legal_cards,
-    WAGE_CURVE, UPGRADED_WAGE_CURVE, STRATEGIES
+    WAGE_CURVE, UPGRADED_WAGE_CURVE, STRATEGIES,
+    START_GOLD, INITIAL_WORKERS, DECLARATION_BONUS_VP,
+    DEBT_PENALTY_MULTIPLIER, DEBT_PENALTY_CAP, GOLD_TO_VP_RATE, RESCUE_GOLD_FOR_4TH
 )
 
 st.set_page_config(page_title="coven", layout="wide")
@@ -254,13 +256,119 @@ with st.sidebar:
         > *結界は村を守る。同時に、外へ出ることも難しくする。*
         """)
 
+    st.divider()
+    st.header("⚙️ ゲーム設定")
+
+    # 設定をsession_stateで管理
+    if "game_config" not in st.session_state:
+        st.session_state.game_config = {
+            "start_gold": START_GOLD,
+            "initial_workers": INITIAL_WORKERS,
+            "declaration_bonus_vp": DECLARATION_BONUS_VP,
+            "debt_penalty_multiplier": DEBT_PENALTY_MULTIPLIER,
+            "debt_penalty_cap": DEBT_PENALTY_CAP,
+            "gold_to_vp_rate": GOLD_TO_VP_RATE,
+            "take_gold_instead": TAKE_GOLD_INSTEAD,
+            "rescue_gold_for_4th": RESCUE_GOLD_FOR_4TH,
+        }
+
+    with st.expander("💰 初期リソース", expanded=False):
+        st.session_state.game_config["start_gold"] = st.number_input(
+            "初期金貨",
+            min_value=0, max_value=20, value=st.session_state.game_config["start_gold"],
+            help="ゲーム開始時の金貨数"
+        )
+        st.session_state.game_config["initial_workers"] = st.number_input(
+            "初期ワーカー数",
+            min_value=1, max_value=5, value=st.session_state.game_config["initial_workers"],
+            help="ゲーム開始時のワーカー数"
+        )
+
+    with st.expander("🎯 トリックテイキング", expanded=False):
+        st.session_state.game_config["declaration_bonus_vp"] = st.number_input(
+            "宣言成功ボーナス(VP)",
+            min_value=0, max_value=5, value=st.session_state.game_config["declaration_bonus_vp"],
+            help="トリック数の宣言が的中した際のVPボーナス"
+        )
+
+    with st.expander("📜 アップグレード選択", expanded=False):
+        st.session_state.game_config["take_gold_instead"] = st.number_input(
+            "アップグレード辞退時の金貨",
+            min_value=0, max_value=10, value=st.session_state.game_config["take_gold_instead"],
+            help="アップグレードを取らない場合に得られる金貨"
+        )
+        st.session_state.game_config["rescue_gold_for_4th"] = st.number_input(
+            "4位救済の金貨",
+            min_value=0, max_value=10, value=st.session_state.game_config["rescue_gold_for_4th"],
+            help="トリック最下位(4位)のプレイヤーが得る追加金貨"
+        )
+
+    with st.expander("💸 負債ペナルティ", expanded=False):
+        st.session_state.game_config["debt_penalty_multiplier"] = st.number_input(
+            "負債ペナルティ倍率",
+            min_value=1, max_value=5, value=st.session_state.game_config["debt_penalty_multiplier"],
+            help="給与未払い1金につき失うVP"
+        )
+        use_debt_cap = st.checkbox(
+            "ペナルティ上限を設定",
+            value=st.session_state.game_config["debt_penalty_cap"] is not None
+        )
+        if use_debt_cap:
+            current_cap = st.session_state.game_config["debt_penalty_cap"] or 10
+            st.session_state.game_config["debt_penalty_cap"] = st.number_input(
+                "ペナルティ上限(VP)",
+                min_value=1, max_value=20, value=current_cap,
+                help="負債ペナルティの最大値"
+            )
+        else:
+            st.session_state.game_config["debt_penalty_cap"] = None
+
+    with st.expander("🏁 ゲーム終了時", expanded=False):
+        st.session_state.game_config["gold_to_vp_rate"] = st.number_input(
+            "金貨→VP変換レート",
+            min_value=1, max_value=10, value=st.session_state.game_config["gold_to_vp_rate"],
+            help="ゲーム終了時、この金貨数で1VPに変換"
+        )
+
+    # 現在の設定を表示
+    with st.expander("📋 現在の設定値", expanded=False):
+        config = st.session_state.game_config
+        st.markdown(f"""
+        - **初期金貨**: {config['start_gold']}G
+        - **初期ワーカー**: {config['initial_workers']}人
+        - **宣言ボーナス**: +{config['declaration_bonus_vp']}VP
+        - **アップグレード辞退**: {config['take_gold_instead']}G
+        - **4位救済**: +{config['rescue_gold_for_4th']}G
+        - **負債ペナルティ**: -{config['debt_penalty_multiplier']}VP/金{' (上限' + str(config['debt_penalty_cap']) + 'VP)' if config['debt_penalty_cap'] else ''}
+        - **金貨→VP**: {config['gold_to_vp_rate']}G = 1VP
+        """)
+
+    st.caption("※設定変更は次のNew Game開始時に反映されます")
+    st.divider()
     st.caption("魔女協会 v0.1")
 
 
 def init_game():
-    """Initialize a new game."""
+    """Initialize a new game with current settings."""
     seed = random.randint(1, 10000)
-    st.session_state.game = GameEngine(seed=seed)
+
+    # 設定をGameConfigオブジェクトに変換
+    if "game_config" in st.session_state:
+        cfg = st.session_state.game_config
+        config = GameConfig(
+            start_gold=cfg["start_gold"],
+            initial_workers=cfg["initial_workers"],
+            declaration_bonus_vp=cfg["declaration_bonus_vp"],
+            debt_penalty_multiplier=cfg["debt_penalty_multiplier"],
+            debt_penalty_cap=cfg["debt_penalty_cap"],
+            gold_to_vp_rate=cfg["gold_to_vp_rate"],
+            take_gold_instead=cfg["take_gold_instead"],
+            rescue_gold_for_4th=cfg["rescue_gold_for_4th"],
+        )
+    else:
+        config = GameConfig()
+
+    st.session_state.game = GameEngine(seed=seed, config=config)
     st.session_state.awaiting_input = False
     # Run until first human input is needed
     run_until_input()
@@ -474,7 +582,8 @@ if pending is not None:
 
         st.write("Choose your reward:")
         options = [f"{upgrade_name(u)} [{u}]" for u in available]
-        options.append(f"Take {TAKE_GOLD_INSTEAD} Gold instead")
+        gold_amount = game.config.take_gold_instead
+        options.append(f"Take {gold_amount} Gold instead")
 
         choice = st.radio("Select:", options, index=0)
 
