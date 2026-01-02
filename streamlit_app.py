@@ -32,20 +32,20 @@ def check_password():
 
     # First run or password not yet checked
     if "password_correct" not in st.session_state:
-        st.text_input("Password", type="password", key="password")
-        if st.button("Login", type="primary"):
+        st.text_input("パスワード", type="password", key="password")
+        if st.button("ログイン", type="primary"):
             password_entered()
             st.rerun()
-        st.caption("Enter the password to access the game.")
+        st.caption("ゲームにアクセスするにはパスワードを入力してください。")
         return False
 
     # Password incorrect
     if not st.session_state["password_correct"]:
-        st.text_input("Password", type="password", key="password")
-        if st.button("Login", type="primary"):
+        st.text_input("パスワード", type="password", key="password")
+        if st.button("ログイン", type="primary"):
             password_entered()
             st.rerun()
-        st.error("Password incorrect. Please try again.")
+        st.error("パスワードが正しくありません。再度入力してください。")
         return False
 
     # Password correct
@@ -415,34 +415,34 @@ pending = game.get_pending_input()
 col1, col2 = st.columns([4, 1])
 with col1:
     if state["game_over"]:
-        st.title("魔女協会 - Game Over")
+        st.title("魔女協会 - ゲーム終了")
     else:
-        st.title(f"魔女協会 - Round {state['round_no'] + 1}/{ROUNDS}")
+        st.title(f"魔女協会 - ラウンド {state['round_no'] + 1}/{ROUNDS}")
 with col2:
-    if st.button("New Game"):
+    if st.button("新規ゲーム"):
         init_game()
         st.rerun()
 
 # Player status
-st.subheader("Players")
+st.subheader("プレイヤー")
 cols = st.columns(4)
 for i, p in enumerate(state["players"]):
     with cols[i]:
         name = p["name"]
         if not p["is_bot"]:
-            name += " (You)"
+            name += " (あなた)"
         else:
             # CPUの性格を表示
             if p.get("strategy_name"):
                 name += f" [{p['strategy_name']}]"
         st.markdown(f"**{name}**")
-        st.text(f"Gold: {p['gold']}  VP: {p['vp']}")
-        st.text(f"Workers: {p['workers']}")
+        st.text(f"金貨: {p['gold']}  VP: {p['vp']}")
+        st.text(f"ワーカー: {p['workers']}")
         # 給料単価表示
         round_no = state["round_no"]
         if round_no < len(WAGE_CURVE):
-            st.text(f"Wage: {WAGE_CURVE[round_no]}G / {UPGRADED_WAGE_CURVE[round_no]}G")
-        st.text(f"Trade Lv{p['trade_level']} Hunt Lv{p['hunt_level']}")
+            st.text(f"給料: {WAGE_CURVE[round_no]}G / {UPGRADED_WAGE_CURVE[round_no]}G")
+        st.text(f"交易 Lv{p['trade_level']} 討伐 Lv{p['hunt_level']}")
         # Show recruit upgrade
         if p.get("recruit_upgrade"):
             upgrade_short = {"RECRUIT_WAGE_DISCOUNT": "給料軽減"}.get(p["recruit_upgrade"], "")
@@ -495,9 +495,9 @@ if pending is not None:
     context = pending.context
 
     if req_type == "declaration":
-        st.subheader(f"Declaration Phase - {player.name}")
+        st.subheader(f"宣言フェーズ - {player.name}")
         hand = context["hand"]
-        st.write("Your hand:")
+        st.write("手札:")
         hand_cols = st.columns(len(hand))
         for i, card in enumerate(hand):
             with hand_cols[i]:
@@ -514,10 +514,10 @@ if pending is not None:
             st.rerun()
 
     elif req_type == "seal":
-        st.subheader(f"Seal Phase - {player.name}")
+        st.subheader(f"封印フェーズ - {player.name}")
         hand = context["hand"]
         need_seal = context["need_seal"]
-        st.write(f"Select {need_seal} cards to seal (they won't be playable this round):")
+        st.write(f"{need_seal}枚のカードを封印してください（このラウンドはプレイ不可）:")
 
         # チェックボックスで各カードを選択（同じカードが複数あっても対応可能）
         selected_indices = []
@@ -531,19 +531,19 @@ if pending is not None:
         if selected_count != need_seal:
             st.warning(f"{need_seal}枚選択してください（現在: {selected_count}枚）")
 
-        if st.button("Seal Cards", type="primary", disabled=selected_count != need_seal):
+        if st.button("封印", type="primary", disabled=selected_count != need_seal):
             sealed_cards = [hand[i] for i in selected_indices]
             game.provide_input(sealed_cards)
             run_until_input()
             st.rerun()
 
     elif req_type == "choose_card":
-        st.subheader(f"Trick Phase - {player.name}'s Turn")
+        st.subheader(f"トリックフェーズ - {player.name}の番")
 
         # Show plays so far
         plays = context["plays_so_far"]
         if plays:
-            st.write("Played so far:")
+            st.write("既出のカード:")
             play_cols = st.columns(len(plays))
             for i, (pname, card_str) in enumerate(plays):
                 with play_cols[i]:
@@ -552,17 +552,17 @@ if pending is not None:
         lead = context["lead_card"]
         if lead:
             if lead.is_trump():
-                st.write(f"Lead: **🌟切り札{lead.rank}**")
+                st.write(f"リード: **🌟切り札{lead.rank}**")
             else:
-                st.write(f"Lead suit: **{lead.suit}** (must follow if possible)")
+                st.write(f"リードスート: **{lead.suit}** (マストフォロー)")
         else:
-            st.write("You are leading this trick. (Cannot lead with trump)")
+            st.write("リードです。（切り札でリード不可）")
 
         hand = context["hand"]
         legal = context["legal"]
         legal_strs = [str(c) for c in legal]
 
-        st.write("Your hand:")
+        st.write("手札:")
         card_cols = st.columns(len(hand))
         for i, card in enumerate(hand):
             with card_cols[i]:
@@ -577,18 +577,18 @@ if pending is not None:
                     st.button(display_str, key=f"card_{i}", disabled=True)
 
     elif req_type == "upgrade":
-        st.subheader(f"Upgrade Selection - {player.name}")
+        st.subheader(f"アップグレード選択 - {player.name}")
         available = context["available"]
 
-        st.write("Choose your reward:")
+        st.write("報酬を選んでください:")
         options = [f"{upgrade_name(u)} [{u}]" for u in available]
         gold_amount = game.config.take_gold_instead
-        options.append(f"Take {gold_amount} Gold instead")
+        options.append(f"代わりに {gold_amount} 金貨を取る")
 
-        choice = st.radio("Select:", options, index=0)
+        choice = st.radio("選択:", options, index=0)
 
-        if st.button("Confirm", type="primary"):
-            if choice.startswith("Take"):
+        if st.button("確定", type="primary"):
+            if choice.startswith("代わりに"):
                 game.provide_input("GOLD")
             else:
                 # Extract upgrade key from choice
@@ -598,15 +598,15 @@ if pending is not None:
             st.rerun()
 
     elif req_type == "worker_actions":
-        st.subheader(f"Worker Placement - {player.name}")
+        st.subheader(f"ワーカー配置 - {player.name}")
         num_workers = context["num_workers"]
         can_use_ritual = context.get("can_use_ritual", False)
 
-        st.write(f"Assign actions for your {num_workers} workers:")
+        st.write(f"{num_workers}人のワーカーにアクションを割り当てます:")
         actions = []
         for i in range(num_workers):
             action = st.selectbox(
-                f"Worker {i+1}:",
+                f"ワーカー {i+1}:",
                 options=ACTIONS,
                 key=f"worker_{i}"
             )
@@ -625,7 +625,7 @@ if pending is not None:
                     key="ritual_action"
                 )
 
-        if st.button("Confirm Actions", type="primary"):
+        if st.button("アクション確定", type="primary"):
             response = {
                 "actions": actions,
                 "ritual_action": ritual_action,
@@ -637,7 +637,7 @@ if pending is not None:
 else:
     # No pending input - show current phase info
     if state["game_over"]:
-        st.subheader("Final Results")
+        st.subheader("最終結果")
         # Get sorted players
         sorted_players = sorted(
             state["players"],
@@ -646,12 +646,12 @@ else:
         )
         for i, p in enumerate(sorted_players, start=1):
             medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, "")
-            st.write(f"{medal} **{i}. {p['name']}** - VP: {p['vp']}, Gold: {p['gold']}")
+            st.write(f"{medal} **{i}. {p['name']}** - VP: {p['vp']}, 金貨: {p['gold']}")
     else:
-        st.info(f"Phase: {state['phase']}")
+        st.info(f"フェーズ: {state['phase']}")
 
 # Game log
 st.divider()
-with st.expander("Game Log", expanded=False):
+with st.expander("ゲームログ", expanded=False):
     for msg in reversed(state["log"]):
         st.text(msg)
