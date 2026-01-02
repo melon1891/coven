@@ -288,7 +288,7 @@ def prompt_choice(prompt: str, choices: List[str], default: Optional[str] = None
         s_up = s.upper()
         if s_up in choices_norm:
             return choices[choices_norm.index(s_up)]
-        print(f"Invalid input: {s}")
+        print(f"無効な入力です: {s}")
 
 
 def print_state(players: List[Player], round_no: int) -> None:
@@ -497,16 +497,16 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
 
         return 'GOLD'
 
-    print(f"\n{player.name}, choose your reward:")
+    print(f"\n{player.name}, 報酬を選んでください:")
     if available:
         for i, u in enumerate(available, start=1):
             print(f"  {i}. {upgrade_name(u)} [{u}]")
     else:
-        print("  (No pickable upgrades for you.)")
-    print(f"  G. Take {TAKE_GOLD_INSTEAD} gold instead")
+        print("  (選択可能なアップグレードがありません)")
+    print(f"  G. 代わりに{TAKE_GOLD_INSTEAD}金貨を取る")
 
     while True:
-        s = input("Pick number or G: ").strip().upper()
+        s = input("番号またはGを入力: ").strip().upper()
         if s == "G":
             return "GOLD"
         try:
@@ -515,7 +515,7 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
                 return available[idx - 1]
         except ValueError:
             pass
-        print("Invalid choice.")
+        print("無効な選択です。")
 
 
 # ======= Declaration (SEE 6 cards -> declare -> seal 2 -> play 4) =======
@@ -541,16 +541,16 @@ def declare_tricks(player: Player, round_hand: List[Card], set_index: int) -> in
         v += trump_count
         return max(0, min(TRICKS_PER_ROUND, v))
 
-    print(f"\n{player.name} Round hand (set #{set_index+1}, {CARDS_PER_SET} cards): " + " ".join(str(c) for c in round_hand))
+    print(f"\n{player.name} ラウンド手札 (セット#{set_index+1}, {CARDS_PER_SET}枚): " + " ".join(str(c) for c in round_hand))
     while True:
-        s = input(f"{player.name} declare tricks (0-{TRICKS_PER_ROUND}): ").strip()
+        s = input(f"{player.name} トリック宣言 (0-{TRICKS_PER_ROUND}): ").strip()
         try:
             v = int(s)
             if 0 <= v <= TRICKS_PER_ROUND:
                 return v
         except ValueError:
             pass
-        print("Invalid declaration.")
+        print("無効な宣言です。")
 
 
 def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger], round_no: int) -> None:
@@ -558,7 +558,7 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
         if p.tricks_won_this_round == p.declared_tricks:
             before = p.vp
             p.vp += DECLARATION_BONUS_VP
-            print(f"Declaration success: {p.name} matched {p.declared_tricks} -> +{DECLARATION_BONUS_VP} VP")
+            print(f"宣言成功: {p.name} が {p.declared_tricks} トリックを的中 -> +{DECLARATION_BONUS_VP} VP")
             if logger:
                 logger.log("declaration_bonus", {
                     "round": round_no + 1,
@@ -597,27 +597,27 @@ def seal_cards(player: Player, hand: List[Card], set_index: int) -> List[Card]:
             hand.remove(c)
         return sealed
 
-    print(f"\n{player.name} seal {need_seal} cards (unplayable this round).")
-    print("Your hand:", " ".join(str(c) for c in hand))
+    print(f"\n{player.name} {need_seal}枚を封印してください（このラウンドは使用不可）")
+    print("手札:", " ".join(str(c) for c in hand))
     sealed: List[Card] = []
     while len(sealed) < need_seal:
-        s = input(f"Select card to SEAL ({len(sealed)+1}/{need_seal}) e.g., S13/H07/D01/C10/T01: ").strip().upper()
+        s = input(f"封印するカードを選択 ({len(sealed)+1}/{need_seal}) 例: S13/H07/D01/C10/T01: ").strip().upper()
         suit_map = {"S": "Spade", "H": "Heart", "D": "Diamond", "C": "Club", "T": "Trump"}
         if len(s) < 2 or s[0] not in suit_map:
-            print("Invalid.")
+            print("無効な入力です。")
             continue
         try:
             rank = int(s[1:])
         except ValueError:
-            print("Invalid.")
+            print("無効な入力です。")
             continue
         chosen = Card(suit_map[s[0]], rank)
         if chosen not in hand:
-            print("You don't have that card.")
+            print("そのカードは持っていません。")
             continue
         hand.remove(chosen)
         sealed.append(chosen)
-        print("Remaining:", " ".join(str(c) for c in hand))
+        print("残り:", " ".join(str(c) for c in hand))
     return sealed
 
 
@@ -682,37 +682,37 @@ def choose_card(player: Player, lead_card: Optional[Card], hand: List[Card]) -> 
         return player.rng.choice(legal)
 
     while True:
-        print(f"\n{player.name} playable hand: " + " ".join(str(c) for c in hand))
+        print(f"\n{player.name} 出せるカード: " + " ".join(str(c) for c in hand))
         if lead_card:
-            print(f"Lead: {lead_card}")
+            print(f"リード: {lead_card}")
             if any(c.suit == lead_card.suit for c in hand):
-                print(f"Must follow: {lead_card.suit}")
+                print(f"マストフォロー: {lead_card.suit}")
             else:
                 trump_in_hand = [c for c in hand if c.is_trump()]
                 if trump_in_hand:
-                    print("Cannot follow - Trump available!")
+                    print("フォロー不可 - 切り札使用可!")
         else:
-            print("You are leading (Trump cards cannot lead)")
+            print("リードです（切り札でリード不可）")
 
-        print("Legal:", " ".join(str(c) for c in legal))
+        print("出せるカード:", " ".join(str(c) for c in legal))
 
-        s = input("Choose a card (e.g., S13 / H07 / D01 / C10 / T01): ").strip().upper()
+        s = input("カードを選択 (例: S13 / H07 / D01 / C10 / T01): ").strip().upper()
         suit_map = {"S": "Spade", "H": "Heart", "D": "Diamond", "C": "Club", "T": "Trump"}
         if len(s) < 2 or s[0] not in suit_map:
-            print("Invalid.")
+            print("無効な入力です。")
             continue
         try:
             rank = int(s[1:])
         except ValueError:
-            print("Invalid.")
+            print("無効な入力です。")
             continue
 
         chosen = Card(suit_map[s[0]], rank)
         if chosen not in hand:
-            print("You don't have that card.")
+            print("そのカードは持っていません。")
             continue
         if chosen not in legal:
-            print("Illegal play (must-follow rule or cannot lead with trump).")
+            print("出せないカードです（マストフォロー違反または切り札リード不可）")
             continue
         return chosen
 
@@ -736,7 +736,7 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
 
     full_hands: Dict[str, List[Card]] = {p.name: players[i].sets[set_index][:] for i, p in enumerate(players)}
 
-    print("\n--- Declaration (after seeing round hand) ---")
+    print("\n--- 宣言フェーズ (手札確認後) ---")
     for p in players:
         p.declared_tricks = declare_tricks(p, full_hands[p.name][:], set_index)
 
@@ -750,9 +750,9 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
             "players": snapshot_players(players),
         })
 
-    print("Declarations:", ", ".join(f"{p.name}:{p.declared_tricks}" for p in players))
+    print("宣言一覧:", ", ".join(f"{p.name}:{p.declared_tricks}" for p in players))
 
-    print("\n--- Sealing cards (choose 2 to be unplayable this round) ---")
+    print("\n--- 封印フェーズ (2枚を封印) ---")
     sealed_by_player: Dict[str, List[Card]] = {}
     playable_hands: Dict[str, List[Card]] = {}
     for p in players:
@@ -777,13 +777,13 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
             "players": snapshot_players(players),
         })
 
-    # 他プレイヤーのシールカードを表示
-    print("\n--- Sealed Cards (All Players) ---")
+    # 他プレイヤーの封印カードを表示
+    print("\n--- 封印されたカード (全プレイヤー) ---")
     for p in players:
         print(f"  {p.name}: {', '.join(str(c) for c in sealed_by_player[p.name])}")
 
-    print(f"\n--- Trick-taking Round {round_no+1}: Using set #{set_index+1} (6 -> seal 2 -> play 4) ---")
-    print(f"Leader this round: {players[leader_index].name} | (No trump)")
+    print(f"\n--- トリックテイキング ラウンド{round_no+1}: セット#{set_index+1}使用 (6枚→封印2枚→4トリック) ---")
+    print(f"このラウンドのリーダー: {players[leader_index].name}")
 
     leader = leader_index
     for trick_idx in range(TRICKS_PER_ROUND):
@@ -804,8 +804,8 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
         winner = trick_winner(lead_card.suit, plays)
         winner.tricks_won_this_round += 1
 
-        print("Plays:", " | ".join(f"{pl.name}:{c}" for pl, c in plays))
-        print(f"Trick winner: {winner.name} (lead suit {lead_card.suit})")
+        print("プレイ:", " | ".join(f"{pl.name}:{c}" for pl, c in plays))
+        print(f"トリック勝者: {winner.name} (リードスート {lead_card.suit})")
 
         if logger:
             logger.log("trick", {
@@ -829,14 +829,14 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
             "sealed": {name: [str(c) for c in sealed_by_player[name]] for name in sealed_by_player},
         })
 
-    print("\n--- Trick Results ---")
+    print("\n--- トリック結果 ---")
     print("-" * 40)
     for p in players:
         status = "✓" if p.tricks_won_this_round == p.declared_tricks else ""
-        print(f"  {p.name}: {p.tricks_won_this_round} tricks (declared {p.declared_tricks}) {status}")
+        print(f"  {p.name}: {p.tricks_won_this_round} トリック (宣言 {p.declared_tricks}) {status}")
     print("-" * 40)
 
-    print("\n--- Declaration Bonus ---")
+    print("\n--- 宣言ボーナス ---")
     apply_declaration_bonus(players, logger, round_no)
 
     return leader_index
@@ -896,9 +896,9 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                     actions.append("TRADE")
         return actions
 
-    print(f"\n{player.name} chooses actions for {n} apprentices.")
+    print(f"\n{player.name} {n}人の見習いにアクションを割り当てます。")
     for i in range(n):
-        a = prompt_choice(f" action for worker {i+1}", ACTIONS, default="TRADE")
+        a = prompt_choice(f" ワーカー{i+1}のアクション", ACTIONS, default="TRADE")
         actions.append(a)
     return actions
 
@@ -1069,7 +1069,7 @@ def main():
         print_state(players, round_no)
 
         revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
-        print("\nRevealed Upgrades:")
+        print("\n公開されたアップグレード:")
         for u in revealed:
             print(" -", upgrade_name(u), f"[{u}]")
         logger.log("reveal_upgrades", {"round": round_no + 1, "revealed": revealed[:]})
@@ -1085,9 +1085,9 @@ def main():
             "declared": {p.name: p.declared_tricks for p in players},
         })
 
-        print("\nRanking for upgrade pick:")
+        print("\nアップグレード選択順:")
         for i, p in enumerate(ranked, start=1):
-            print(f" {i}. {p.name} tricks={p.tricks_won_this_round} witches={p.permanent_witch_count()} declared={p.declared_tricks}")
+            print(f" {i}. {p.name} トリック={p.tricks_won_this_round} 魔女={p.permanent_witch_count()} 宣言={p.declared_tricks}")
 
         for p in ranked:
             before = snapshot_players([p])[0]
@@ -1095,7 +1095,7 @@ def main():
 
             if choice == "GOLD":
                 p.gold += TAKE_GOLD_INSTEAD
-                print(f"{p.name} takes {TAKE_GOLD_INSTEAD} gold.")
+                print(f"{p.name} が {TAKE_GOLD_INSTEAD} 金貨を獲得。")
                 logger.log("upgrade_pick", {
                     "round": round_no + 1,
                     "player": p.name,
@@ -1108,7 +1108,7 @@ def main():
             else:
                 revealed.remove(choice)
                 apply_upgrade(p, choice)
-                print(f"{p.name} takes upgrade: {upgrade_name(choice)}")
+                print(f"{p.name} がアップグレード獲得: {upgrade_name(choice)}")
                 logger.log("upgrade_pick", {
                     "round": round_no + 1,
                     "player": p.name,
@@ -1122,7 +1122,7 @@ def main():
         fourth = ranked[-1]
         before_gold = fourth.gold
         fourth.gold += RESCUE_GOLD_FOR_4TH
-        print(f"\nRescue: {fourth.name} gains +{RESCUE_GOLD_FOR_4TH} gold (4th place).")
+        print(f"\n救済: {fourth.name} が +{RESCUE_GOLD_FOR_4TH} 金貨を獲得 (4位ボーナス)")
         logger.log("rescue", {
             "round": round_no + 1,
             "player": fourth.name,
@@ -1131,7 +1131,7 @@ def main():
             "amount": RESCUE_GOLD_FOR_4TH,
         })
 
-        print("\n--- Worker Placement ---")
+        print("\n--- ワーカー配置 ---")
         logger.log("wp_start", {"round": round_no + 1, "players": snapshot_players(players)})
         for p in players:
             actions = choose_actions_for_player(p, round_no)
@@ -1148,7 +1148,7 @@ def main():
         initial_rate = WAGE_CURVE[round_no]
         upgraded_rate = UPGRADED_WAGE_CURVE[round_no]
         cap_info = f"上限{DEBT_PENALTY_CAP}" if DEBT_PENALTY_CAP else "無制限"
-        print(f"\n--- Wage Payment (初期={initial_rate}, 雇用={upgraded_rate}) and Debt (-{DEBT_PENALTY_MULTIPLIER}VP/金, {cap_info}) ---")
+        print(f"\n--- 給料支払い (初期={initial_rate}, 雇用={upgraded_rate}) と負債 (-{DEBT_PENALTY_MULTIPLIER}VP/金, {cap_info}) ---")
         logger.log("wage_phase_start", {"round": round_no + 1, "initial_wage_rate": initial_rate, "upgraded_wage_rate": upgraded_rate, "players": snapshot_players(players)})
 
         for p in players:
@@ -1193,12 +1193,12 @@ def main():
     })
     logger.close()
 
-    print("\n=== GAME OVER ===")
+    print("\n=== ゲーム終了 ===")
     for i, p in enumerate(players_sorted, start=1):
-        print(f"{i}. {p.name} VP={p.vp} Gold={p.gold} Workers={p.basic_workers_total} "
-              f"TradeY={p.trade_yield()}(Lv{p.trade_level}) HuntY={p.hunt_yield()}(Lv{p.hunt_level}) "
-              f"Witches={p.permanent_witch_count()}")
-    print(f"\nWinner: {players_sorted[0].name}")
+        print(f"{i}. {p.name} VP={p.vp} 金貨={p.gold} ワーカー={p.basic_workers_total} "
+              f"交易={p.trade_yield()}(Lv{p.trade_level}) 討伐={p.hunt_yield()}(Lv{p.hunt_level}) "
+              f"魔女={p.permanent_witch_count()}")
+    print(f"\n勝者: {players_sorted[0].name}")
     print(f"\nLog written to: {LOG_PATH}")
 
 
@@ -1299,7 +1299,7 @@ class GameEngine:
 
         if req_type == "declaration":
             player.declared_tricks = response
-            self._log(f"{player.name} declares {response} tricks")
+            self._log(f"{player.name} が {response} トリックを宣言")
             self._pending_input = None
 
         elif req_type == "seal":
@@ -1308,7 +1308,7 @@ class GameEngine:
                 self.full_hands[player.name].remove(c)
             self.sealed_by_player[player.name] = response
             self.playable_hands[player.name] = self.full_hands[player.name][:]
-            self._log(f"{player.name} sealed: {', '.join(str(c) for c in response)}")
+            self._log(f"{player.name} 封印: {', '.join(str(c) for c in response)}")
             self._pending_input = None
 
         elif req_type == "choose_card":
@@ -1324,11 +1324,11 @@ class GameEngine:
             if response == "GOLD":
                 gold_amount = self.config.take_gold_instead
                 player.gold += gold_amount
-                self._log(f"{player.name} takes {gold_amount} gold")
+                self._log(f"{player.name} が {gold_amount} 金貨を獲得")
             else:
                 self.revealed_upgrades.remove(response)
                 apply_upgrade(player, response)
-                self._log(f"{player.name} takes: {upgrade_name(response)}")
+                self._log(f"{player.name} 獲得: {upgrade_name(response)}")
             self._pending_input = None
 
         elif req_type == "worker_actions":
@@ -1339,7 +1339,7 @@ class GameEngine:
 
                 # Resolve main actions
                 delta = resolve_actions(player, actions)
-                self._log(f"{player.name} actions: {actions}")
+                self._log(f"{player.name} アクション: {actions}")
 
                 # Apply WITCH_RITUAL (extra action)
                 if ritual_action:
@@ -1350,7 +1350,7 @@ class GameEngine:
                 # Backward compatibility: response is just a list
                 actions = response
                 delta = resolve_actions(player, actions)
-                self._log(f"{player.name} actions: {actions}")
+                self._log(f"{player.name} アクション: {actions}")
 
             self.wp_actions = actions
             self._pending_input = None
@@ -1372,9 +1372,9 @@ class GameEngine:
                 self._finish_game()
                 return False
 
-            self._log(f"=== Round {self.round_no + 1}/{ROUNDS} ===")
+            self._log(f"=== ラウンド {self.round_no + 1}/{ROUNDS} ===")
             self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES)
-            self._log(f"Upgrades: {', '.join(upgrade_name(u) for u in self.revealed_upgrades)}")
+            self._log(f"アップグレード: {', '.join(upgrade_name(u) for u in self.revealed_upgrades)}")
 
             self.set_index = self.round_no % SETS_PER_GAME
             self.leader_index = self.round_no % len(self.players)
@@ -1397,7 +1397,7 @@ class GameEngine:
             player = self.players[self.sub_phase]
             if player.is_bot:
                 player.declared_tricks = declare_tricks(player, self.full_hands[player.name][:], self.set_index)
-                self._log(f"{player.name} declares {player.declared_tricks} tricks")
+                self._log(f"{player.name} が {player.declared_tricks} トリックを宣言")
                 self.sub_phase += 1
             else:
                 self._pending_input = InputRequest(
@@ -1425,7 +1425,7 @@ class GameEngine:
                 sealed = seal_cards(player, hand, self.set_index)
                 self.sealed_by_player[player.name] = sealed
                 self.playable_hands[player.name] = hand[:]
-                self._log(f"{player.name} sealed: {', '.join(str(c) for c in sealed)}")
+                self._log(f"{player.name} 封印: {', '.join(str(c) for c in sealed)}")
                 self.sub_phase += 1
             else:
                 self._pending_input = InputRequest(
@@ -1457,7 +1457,7 @@ class GameEngine:
                 fourth = self.ranked_players[-1]
                 rescue_gold = self.config.rescue_gold_for_4th
                 fourth.gold += rescue_gold
-                self._log(f"Rescue: {fourth.name} +{rescue_gold} gold")
+                self._log(f"救済: {fourth.name} +{rescue_gold} 金貨")
                 self.phase = "worker_placement"
                 self.wp_player_index = 0
                 return True
@@ -1470,11 +1470,11 @@ class GameEngine:
                 if choice == "GOLD":
                     gold_amount = self.config.take_gold_instead
                     player.gold += gold_amount
-                    self._log(f"{player.name} takes {gold_amount} gold")
+                    self._log(f"{player.name} が {gold_amount} 金貨を獲得")
                 else:
                     self.revealed_upgrades.remove(choice)
                     apply_upgrade(player, choice)
-                    self._log(f"{player.name} takes: {upgrade_name(choice)}")
+                    self._log(f"{player.name} 獲得: {upgrade_name(choice)}")
                 self.upgrade_pick_index += 1
             else:
                 self._pending_input = InputRequest(
@@ -1500,7 +1500,7 @@ class GameEngine:
             if player.is_bot:
                 actions = choose_actions_for_player(player, self.round_no)
                 resolve_actions(player, actions)
-                self._log(f"{player.name} actions: {actions}")
+                self._log(f"{player.name} アクション: {actions}")
                 self.wp_player_index += 1
             else:
                 self._pending_input = InputRequest(
@@ -1520,7 +1520,7 @@ class GameEngine:
         if self.phase == "wage_payment":
             initial_rate = WAGE_CURVE[self.round_no]
             upgraded_rate = UPGRADED_WAGE_CURVE[self.round_no]
-            self._log(f"--- Wage Payment (初期={initial_rate}, 雇用={upgraded_rate}) ---")
+            self._log(f"--- 給料支払い (初期={initial_rate}, 雇用={upgraded_rate}) ---")
 
             for p in self.players:
                 res = pay_wages_and_debt(
@@ -1557,7 +1557,7 @@ class GameEngine:
             winner = trick_winner(self.lead_card.suit, self.trick_plays)
             winner.tricks_won_this_round += 1
             plays_str = " | ".join(f"{pl.name}:{c}" for pl, c in self.trick_plays)
-            self._log(f"Trick {self.current_trick + 1}: {plays_str} -> {winner.name} wins")
+            self._log(f"トリック {self.current_trick + 1}: {plays_str} -> {winner.name} 勝利")
 
             # Save trick history for display
             self.trick_history.append({
@@ -1572,10 +1572,10 @@ class GameEngine:
 
             if self.current_trick >= TRICKS_PER_ROUND:
                 # All tricks done, show summary and apply declaration bonus
-                self._log("--- Trick Results ---")
+                self._log("--- トリック結果 ---")
                 for p in self.players:
                     status = "✓" if p.tricks_won_this_round == p.declared_tricks else ""
-                    self._log(f"  {p.name}: {p.tricks_won_this_round} tricks (declared {p.declared_tricks}) {status}")
+                    self._log(f"  {p.name}: {p.tricks_won_this_round} トリック (宣言 {p.declared_tricks}) {status}")
                 self._apply_declaration_bonus()
                 self.ranked_players = rank_players_for_upgrade(self.players, self.leader_index)
                 self.upgrade_pick_index = 0
@@ -1617,25 +1617,25 @@ class GameEngine:
         for p in self.players:
             if p.tricks_won_this_round == p.declared_tricks:
                 p.vp += bonus_vp
-                self._log(f"Declaration success: {p.name} matched {p.declared_tricks} -> +{bonus_vp} VP")
+                self._log(f"宣言成功: {p.name} が {p.declared_tricks} を的中 -> +{bonus_vp} VP")
 
     def _finish_game(self):
         """Finalize game and determine winner."""
         # 金貨→VP変換
         gold_to_vp_rate = self.config.gold_to_vp_rate
-        self._log("--- Gold to VP conversion ---")
+        self._log("--- 金貨→VP変換 ---")
         for p in self.players:
             bonus_vp = p.gold // gold_to_vp_rate if gold_to_vp_rate > 0 else 0
             if bonus_vp > 0:
-                self._log(f"{p.name}: {p.gold}G -> +{bonus_vp}VP")
+                self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP")
                 p.vp += bonus_vp
 
         self.phase = "game_end"
         players_sorted = sorted(self.players, key=lambda p: (p.vp, p.gold), reverse=True)
-        self._log("=== GAME OVER ===")
+        self._log("=== ゲーム終了 ===")
         for i, p in enumerate(players_sorted, start=1):
-            self._log(f"{i}. {p.name} VP={p.vp} Gold={p.gold}")
-        self._log(f"Winner: {players_sorted[0].name}")
+            self._log(f"{i}. {p.name} VP={p.vp} 金貨={p.gold}")
+        self._log(f"勝者: {players_sorted[0].name}")
 
 
 # ======= Simulation =======
