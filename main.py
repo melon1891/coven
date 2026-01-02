@@ -181,6 +181,32 @@ class Card:
 
 
 @dataclass
+class GameConfig:
+    """ゲームルールに関わる設定パラメーター"""
+    start_gold: int = START_GOLD
+    initial_workers: int = INITIAL_WORKERS
+    declaration_bonus_vp: int = DECLARATION_BONUS_VP
+    debt_penalty_multiplier: int = DEBT_PENALTY_MULTIPLIER
+    debt_penalty_cap: Optional[int] = DEBT_PENALTY_CAP
+    gold_to_vp_rate: int = GOLD_TO_VP_RATE
+    take_gold_instead: int = TAKE_GOLD_INSTEAD
+    rescue_gold_for_4th: int = RESCUE_GOLD_FOR_4TH
+
+    def to_dict(self) -> Dict[str, Any]:
+        """設定を辞書形式で返す"""
+        return {
+            "start_gold": self.start_gold,
+            "initial_workers": self.initial_workers,
+            "declaration_bonus_vp": self.declaration_bonus_vp,
+            "debt_penalty_multiplier": self.debt_penalty_multiplier,
+            "debt_penalty_cap": self.debt_penalty_cap,
+            "gold_to_vp_rate": self.gold_to_vp_rate,
+            "take_gold_instead": self.take_gold_instead,
+            "rescue_gold_for_4th": self.rescue_gold_for_4th,
+        }
+
+
+@dataclass
 class Player:
     name: str
     is_bot: bool = False
@@ -909,12 +935,23 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
     return {"before": before, "after": after, "witch_bonuses": witch_bonuses}
 
 
-def pay_wages_and_debt(player: Player, round_no: int) -> Dict[str, Any]:
+def pay_wages_and_debt(
+    player: Player,
+    round_no: int,
+    debt_multiplier: Optional[int] = None,
+    debt_cap: Optional[int] = None,
+    initial_workers_config: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     Rule:
     - New hires do NOT act this round
     - BUT their wage IS paid starting this round
     - Initial workers use WAGE_CURVE, hired workers use UPGRADED_WAGE_CURVE
+
+    Args:
+        debt_multiplier: Override for debt penalty multiplier (None = use global)
+        debt_cap: Override for debt penalty cap (None = use global)
+        initial_workers_config: Override for initial workers count (None = use global)
     """
     before_gold, before_vp = player.gold, player.vp
 
@@ -926,7 +963,8 @@ def pay_wages_and_debt(player: Player, round_no: int) -> Dict[str, Any]:
     initial_wage_rate = WAGE_CURVE[round_no]
     upgraded_wage_rate = UPGRADED_WAGE_CURVE[round_no]
 
-    initial_workers_count = min(INITIAL_WORKERS, workers_paid)
+    initial_workers_base = initial_workers_config if initial_workers_config is not None else INITIAL_WORKERS
+    initial_workers_count = min(initial_workers_base, workers_paid)
     upgraded_workers_count = workers_paid - initial_workers_count
 
     wage_gross = (initial_workers_count * initial_wage_rate) + (upgraded_workers_count * upgraded_wage_rate)
@@ -952,7 +990,10 @@ def pay_wages_and_debt(player: Player, round_no: int) -> Dict[str, Any]:
         player.gold -= wage_net
     else:
         player.gold = 0
-        debt_penalty = calculate_debt_penalty(short)
+        # Use config overrides if provided, otherwise use global
+        actual_multiplier = debt_multiplier if debt_multiplier is not None else DEBT_PENALTY_MULTIPLIER
+        actual_cap = debt_cap if debt_cap is not None else DEBT_PENALTY_CAP
+        debt_penalty = calculate_debt_penalty_configurable(short, actual_multiplier, actual_cap)
         player.vp -= debt_penalty
 
     return {
@@ -1174,9 +1215,10 @@ class InputRequest:
 class GameEngine:
     """State-machine based game engine for GUI integration."""
 
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, config: Optional[GameConfig] = None):
         self.rng = random.Random(seed)
         self.deal_seed = seed
+        self.config = config if config is not None else GameConfig()
 
         # CPUにランダムな性格を割り当て
         bot_rng = random.Random()
@@ -1186,6 +1228,11 @@ class GameEngine:
             Player("P3", is_bot=True, rng=random.Random(3), strategy=assign_random_strategy(bot_rng)),
             Player("P4", is_bot=True, rng=random.Random(4), strategy=assign_random_strategy(bot_rng)),
         ]
+
+        # 設定値でプレイヤーの初期状態を上書き
+        for p in self.players:
+            p.gold = self.config.start_gold
+            p.basic_workers_total = self.config.initial_workers
 
         deal_fixed_sets(self.players, seed=self.deal_seed, logger=None)
 
@@ -1275,8 +1322,9 @@ class GameEngine:
         elif req_type == "upgrade":
             # response is upgrade string or "GOLD"
             if response == "GOLD":
-                player.gold += TAKE_GOLD_INSTEAD
-                self._log(f"{player.name} takes {TAKE_GOLD_INSTEAD} gold")
+                gold_amount = self.config.take_gold_instead
+                player.gold += gold_amount
+                self._log(f"{player.name} takes {gold_amount} gold")
             else:
                 self.revealed_upgrades.remove(response)
                 apply_upgrade(player, response)
@@ -1407,8 +1455,9 @@ class GameEngine:
             if self.upgrade_pick_index >= len(self.ranked_players):
                 # Give 4th place rescue gold
                 fourth = self.ranked_players[-1]
-                fourth.gold += RESCUE_GOLD_FOR_4TH
-                self._log(f"Rescue: {fourth.name} +{RESCUE_GOLD_FOR_4TH} gold")
+                rescue_gold = self.config.rescue_gold_for_4th
+                fourth.gold += rescue_gold
+                self._log(f"Rescue: {fourth.name} +{rescue_gold} gold")
                 self.phase = "worker_placement"
                 self.wp_player_index = 0
                 return True
@@ -1419,8 +1468,9 @@ class GameEngine:
             if player.is_bot:
                 choice = choose_upgrade_or_gold(player, self.revealed_upgrades, self.round_no)
                 if choice == "GOLD":
-                    player.gold += TAKE_GOLD_INSTEAD
-                    self._log(f"{player.name} takes {TAKE_GOLD_INSTEAD} gold")
+                    gold_amount = self.config.take_gold_instead
+                    player.gold += gold_amount
+                    self._log(f"{player.name} takes {gold_amount} gold")
                 else:
                     self.revealed_upgrades.remove(choice)
                     apply_upgrade(player, choice)
@@ -1473,7 +1523,12 @@ class GameEngine:
             self._log(f"--- Wage Payment (初期={initial_rate}, 雇用={upgraded_rate}) ---")
 
             for p in self.players:
-                res = pay_wages_and_debt(p, self.round_no)
+                res = pay_wages_and_debt(
+                    p, self.round_no,
+                    debt_multiplier=self.config.debt_penalty_multiplier,
+                    debt_cap=self.config.debt_penalty_cap,
+                    initial_workers_config=self.config.initial_workers,
+                )
                 self._log(f"{p.name}: Gold {res['gold_before']}->{res['gold_after']}, VP {res['vp_before']}->{res['vp_after']}")
 
             # Activate new hires
@@ -1558,17 +1613,19 @@ class GameEngine:
 
     def _apply_declaration_bonus(self):
         """Apply declaration bonus to players who matched their declaration."""
+        bonus_vp = self.config.declaration_bonus_vp
         for p in self.players:
             if p.tricks_won_this_round == p.declared_tricks:
-                p.vp += DECLARATION_BONUS_VP
-                self._log(f"Declaration success: {p.name} matched {p.declared_tricks} -> +{DECLARATION_BONUS_VP} VP")
+                p.vp += bonus_vp
+                self._log(f"Declaration success: {p.name} matched {p.declared_tricks} -> +{bonus_vp} VP")
 
     def _finish_game(self):
         """Finalize game and determine winner."""
         # 金貨→VP変換
+        gold_to_vp_rate = self.config.gold_to_vp_rate
         self._log("--- Gold to VP conversion ---")
         for p in self.players:
-            bonus_vp = p.gold // GOLD_TO_VP_RATE
+            bonus_vp = p.gold // gold_to_vp_rate if gold_to_vp_rate > 0 else 0
             if bonus_vp > 0:
                 self._log(f"{p.name}: {p.gold}G -> +{bonus_vp}VP")
                 p.vp += bonus_vp
