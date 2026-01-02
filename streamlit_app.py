@@ -654,7 +654,7 @@ if pending is not None:
                 idx = row * 3 + col
                 if idx < len(hand):
                     with cols[col]:
-                        st.markdown(f"<div style='text-align:center; font-size:1.5rem; padding:0.5rem; background:#f0f2f6; border-radius:8px; margin:0.25rem;'>{card_display(hand[idx])}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='text-align:center; font-size:1.5rem; padding:0.5rem; background:#f0f2f6; border-radius:8px; margin:0.25rem; color:#000;'>{card_display(hand[idx])}</div>", unsafe_allow_html=True)
 
         st.divider()
         declared = st.selectbox(
