@@ -17,6 +17,137 @@ from main import (
 
 st.set_page_config(page_title="coven", layout="wide")
 
+# ======= Mobile Responsive CSS =======
+st.markdown("""
+<style>
+/* モバイル向けレスポンシブスタイル */
+@media (max-width: 768px) {
+    /* サイドバーを初期状態で閉じる */
+    [data-testid="stSidebar"] {
+        min-width: 0 !important;
+    }
+
+    /* メインコンテンツの余白を調整 */
+    .main .block-container {
+        padding: 1rem 0.5rem !important;
+        max-width: 100% !important;
+    }
+
+    /* タイトルを小さく */
+    h1 {
+        font-size: 1.5rem !important;
+    }
+
+    /* サブヘッダーを小さく */
+    h2, h3 {
+        font-size: 1.2rem !important;
+    }
+
+    /* ボタンを大きく（タッチ操作向け） */
+    .stButton > button {
+        min-height: 48px !important;
+        padding: 0.75rem 1rem !important;
+        font-size: 1rem !important;
+        width: 100% !important;
+    }
+
+    /* プライマリボタン */
+    .stButton > button[kind="primary"] {
+        min-height: 52px !important;
+        font-size: 1.1rem !important;
+    }
+
+    /* カード選択ボタン */
+    .card-button {
+        min-width: 60px !important;
+        min-height: 70px !important;
+        font-size: 1.5rem !important;
+    }
+
+    /* チェックボックスのサイズ */
+    .stCheckbox {
+        padding: 0.5rem !important;
+    }
+
+    .stCheckbox label {
+        font-size: 1.2rem !important;
+    }
+
+    /* セレクトボックスのサイズ */
+    .stSelectbox > div > div {
+        min-height: 48px !important;
+    }
+
+    /* ラジオボタンのサイズ */
+    .stRadio > div {
+        gap: 0.75rem !important;
+    }
+
+    .stRadio label {
+        padding: 0.5rem !important;
+        font-size: 1rem !important;
+    }
+
+    /* カラムの間隔を調整 */
+    [data-testid="column"] {
+        padding: 0.25rem !important;
+    }
+
+    /* テキスト入力を大きく */
+    .stTextInput input {
+        min-height: 48px !important;
+        font-size: 1rem !important;
+    }
+
+    /* 数値入力を大きく */
+    .stNumberInput input {
+        min-height: 48px !important;
+    }
+}
+
+/* タブレット向け調整 */
+@media (max-width: 1024px) and (min-width: 769px) {
+    .main .block-container {
+        padding: 1rem 1rem !important;
+    }
+}
+
+/* カード表示用スタイル */
+.card-display {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+    margin: 0.25rem;
+    border-radius: 8px;
+    background: #f0f2f6;
+    min-width: 50px;
+    font-size: 1.2rem;
+}
+
+/* プレイヤーカード用スタイル */
+.player-card {
+    padding: 0.75rem;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    margin-bottom: 0.5rem;
+}
+
+.player-card-bot {
+    background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
+}
+
+/* トリック履歴のスタイル */
+.trick-result {
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+    border-left: 3px solid #667eea;
+    background: #f7fafc;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # ======= Authentication =======
 def check_password():
@@ -423,67 +554,86 @@ with col2:
         init_game()
         st.rerun()
 
-# Player status
+# Player status - 2x2 grid for mobile
 st.subheader("プレイヤー")
-cols = st.columns(4)
-for i, p in enumerate(state["players"]):
-    with cols[i]:
-        name = p["name"]
-        if not p["is_bot"]:
-            name += " (あなた)"
-        else:
-            # CPUの性格はUIには非表示
-            pass
-        st.markdown(f"**{name}**")
-        st.text(f"金貨: {p['gold']}  VP: {p['vp']}")
-        st.text(f"ワーカー: {p['workers']}")
-        # 給料単価表示
-        round_no = state["round_no"]
-        if round_no < len(WAGE_CURVE):
-            st.text(f"給料: {WAGE_CURVE[round_no]}G / {UPGRADED_WAGE_CURVE[round_no]}G")
-        st.text(f"交易 Lv{p['trade_level']} 討伐 Lv{p['hunt_level']}")
-        # Show recruit upgrade
-        if p.get("recruit_upgrade"):
-            upgrade_short = {"RECRUIT_WAGE_DISCOUNT": "給料軽減"}.get(p["recruit_upgrade"], "")
-            st.text(f"📦 {upgrade_short}")
-        # Show witches
-        if p.get("witches"):
-            witch_names = {"WITCH_BLACKROAD": "黒路", "WITCH_BLOODHUNT": "血誓", "WITCH_HERD": "群導",
-                          "WITCH_RITUAL": "大儀式", "WITCH_BARRIER": "結界"}
-            witch_display = ", ".join(witch_names.get(w, w) for w in p["witches"])
-            st.text(f"🧙 {witch_display}")
-        # Show declaration info during trick phase
-        if p.get("declared_tricks", 0) > 0 or p.get("tricks_won", 0) > 0:
-            st.text(f"宣言: {p['declared_tricks']} / 獲得: {p['tricks_won']}")
+# 2行に分割（モバイルで見やすく）
+for row in range(2):
+    cols = st.columns(2)
+    for col in range(2):
+        i = row * 2 + col
+        p = state["players"][i]
+        with cols[col]:
+            name = p["name"]
+            is_human = not p["is_bot"]
+            if is_human:
+                name += " 👤"
 
-# Revealed Upgrades display
+            # コンパクトな表示
+            st.markdown(f"**{name}**")
+            # 金貨とVPを1行に
+            st.markdown(f"💰 {p['gold']}G  |  🏆 {p['vp']}VP")
+            # ワーカーと給料を1行に
+            round_no = state["round_no"]
+            if round_no < len(WAGE_CURVE):
+                st.caption(f"👷 {p['workers']}人 (給料: {WAGE_CURVE[round_no]}G/{UPGRADED_WAGE_CURVE[round_no]}G)")
+            else:
+                st.caption(f"👷 {p['workers']}人")
+            # 交易・討伐レベルをコンパクトに
+            st.caption(f"交易Lv{p['trade_level']} / 討伐Lv{p['hunt_level']}")
+            # Show recruit upgrade
+            if p.get("recruit_upgrade"):
+                upgrade_short = {"RECRUIT_WAGE_DISCOUNT": "給料軽減"}.get(p["recruit_upgrade"], "")
+                st.caption(f"📦 {upgrade_short}")
+            # Show witches
+            if p.get("witches"):
+                witch_names = {"WITCH_BLACKROAD": "黒路", "WITCH_BLOODHUNT": "血誓", "WITCH_HERD": "群導",
+                              "WITCH_RITUAL": "大儀式", "WITCH_BARRIER": "結界"}
+                witch_display = ", ".join(witch_names.get(w, w) for w in p["witches"])
+                st.caption(f"🧙 {witch_display}")
+            # Show declaration info during trick phase
+            if p.get("declared_tricks", 0) > 0 or p.get("tricks_won", 0) > 0:
+                st.markdown(f"🎯 宣言 {p['declared_tricks']} / 獲得 {p['tricks_won']}")
+
+# Revealed Upgrades display（2列表示でモバイル対応）
 if state["revealed_upgrades"] and not state["game_over"]:
-    st.subheader("今ラウンドのアップグレード")
-    upgrade_cols = st.columns(len(state["revealed_upgrades"]))
-    for i, u in enumerate(state["revealed_upgrades"]):
-        with upgrade_cols[i]:
-            st.markdown(
-                f'<span title="{upgrade_description(u)}" style="cursor:help; '
-                f'border-bottom:1px dotted #666;">📜 {upgrade_name(u)}</span>',
-                unsafe_allow_html=True
-            )
+    with st.expander("📜 今ラウンドのアップグレード", expanded=False):
+        upgrades = state["revealed_upgrades"]
+        for row in range((len(upgrades) + 1) // 2):
+            cols = st.columns(2)
+            for col in range(2):
+                idx = row * 2 + col
+                if idx < len(upgrades):
+                    u = upgrades[idx]
+                    with cols[col]:
+                        st.markdown(f"**{upgrade_name(u)}**")
+                        st.caption(upgrade_description(u))
 
-# Sealed Cards display
+# Sealed Cards display（2x2グリッドでモバイル対応）
 if state.get("sealed_by_player"):
-    st.subheader("封印されたカード")
-    sealed_cols = st.columns(len(state["sealed_by_player"]))
-    for i, (pname, sealed_cards) in enumerate(state["sealed_by_player"].items()):
-        with sealed_cols[i]:
-            st.markdown(f"**{pname}**")
-            st.text(", ".join(sealed_cards) if sealed_cards else "-")
+    with st.expander("🔒 封印されたカード", expanded=False):
+        players = list(state["sealed_by_player"].items())
+        for row in range(2):
+            cols = st.columns(2)
+            for col in range(2):
+                idx = row * 2 + col
+                if idx < len(players):
+                    pname, sealed_cards = players[idx]
+                    with cols[col]:
+                        st.markdown(f"**{pname}**")
+                        st.text(", ".join(sealed_cards) if sealed_cards else "-")
 
-# Trick History display
+# Trick History display（コンパクト表示）
 if state["trick_history"]:
-    st.subheader(f"トリック結果 ({len(state['trick_history'])}/{TRICKS_PER_ROUND})")
-    for trick in state["trick_history"]:
-        plays_str = " | ".join(f"{pname}:{card}" for pname, card in trick["plays"])
-        winner_mark = "🏆"
-        st.markdown(f"**Trick {trick['trick_no']}**: {plays_str} → {winner_mark} **{trick['winner']}**")
+    with st.expander(f"🎴 トリック結果 ({len(state['trick_history'])}/{TRICKS_PER_ROUND})", expanded=True):
+        for trick in state["trick_history"]:
+            # 各トリックを1行にコンパクトに
+            plays_display = []
+            for pname, card in trick["plays"]:
+                short_name = pname.replace("Player ", "P")
+                plays_display.append(f"{short_name}:{card}")
+            plays_str = " | ".join(plays_display)
+            winner_short = trick['winner'].replace("Player ", "P")
+            st.markdown(f"**T{trick['trick_no']}**: {plays_str} → 🏆 **{winner_short}**")
 
 st.divider()
 
@@ -494,120 +644,166 @@ if pending is not None:
     context = pending.context
 
     if req_type == "declaration":
-        st.subheader(f"宣言フェーズ - {player.name}")
+        st.subheader(f"🎴 宣言フェーズ")
         hand = context["hand"]
         st.write("手札:")
-        hand_cols = st.columns(len(hand))
-        for i, card in enumerate(hand):
-            with hand_cols[i]:
-                st.markdown(f"**{card_display(card)}**")
+        # 3列×2行のグリッドで表示（モバイル向け）
+        for row in range(2):
+            cols = st.columns(3)
+            for col in range(3):
+                idx = row * 3 + col
+                if idx < len(hand):
+                    with cols[col]:
+                        st.markdown(f"<div style='text-align:center; font-size:1.5rem; padding:0.5rem; background:#f0f2f6; border-radius:8px; margin:0.25rem;'>{card_display(hand[idx])}</div>", unsafe_allow_html=True)
 
+        st.divider()
         declared = st.selectbox(
             "何トリック取る？",
             options=list(range(1, TRICKS_PER_ROUND + 1)),
             index=1
         )
-        if st.button("宣言", type="primary"):
+        if st.button("🎯 宣言する", type="primary", use_container_width=True):
             game.provide_input(declared)
             run_until_input()
             st.rerun()
 
     elif req_type == "seal":
-        st.subheader(f"封印フェーズ - {player.name}")
+        st.subheader(f"🔒 封印フェーズ")
         hand = context["hand"]
         need_seal = context["need_seal"]
-        st.write(f"{need_seal}枚のカードを封印してください（このラウンドはプレイ不可）:")
+        st.info(f"📌 {need_seal}枚のカードを選んで封印（このラウンドはプレイ不可）")
 
-        # チェックボックスで各カードを選択（同じカードが複数あっても対応可能）
+        # 3列×2行のグリッドで表示（モバイル向け）
         selected_indices = []
-        cols = st.columns(len(hand))
-        for i, card in enumerate(hand):
-            with cols[i]:
-                if st.checkbox(card_display(card), key=f"seal_{i}"):
-                    selected_indices.append(i)
+        for row in range(2):
+            cols = st.columns(3)
+            for col in range(3):
+                idx = row * 3 + col
+                if idx < len(hand):
+                    with cols[col]:
+                        card = hand[idx]
+                        # 大きなチェックボックス付きカード表示
+                        if st.checkbox(card_display(card), key=f"seal_{idx}"):
+                            selected_indices.append(idx)
 
         selected_count = len(selected_indices)
-        if selected_count != need_seal:
-            st.warning(f"{need_seal}枚選択してください（現在: {selected_count}枚）")
+        st.divider()
 
-        if st.button("封印", type="primary", disabled=selected_count != need_seal):
+        if selected_count != need_seal:
+            st.warning(f"あと {need_seal - selected_count} 枚選んでください（選択中: {selected_count}枚）")
+
+        if st.button("🔒 封印する", type="primary", disabled=selected_count != need_seal, use_container_width=True):
             sealed_cards = [hand[i] for i in selected_indices]
             game.provide_input(sealed_cards)
             run_until_input()
             st.rerun()
 
     elif req_type == "choose_card":
-        st.subheader(f"トリックフェーズ - {player.name}の番")
+        st.subheader(f"🃏 カードを選択")
 
-        # Show plays so far
-        plays = context["plays_so_far"]
-        if plays:
-            st.write("既出のカード:")
-            play_cols = st.columns(len(plays))
-            for i, (pname, card_str) in enumerate(plays):
-                with play_cols[i]:
-                    st.markdown(f"**{pname}**: {card_str}")
-
+        # リード情報を目立つように表示
         lead = context["lead_card"]
         if lead:
             if lead.is_trump():
-                st.write(f"リード: **🌟切り札{lead.rank}**")
+                st.info(f"🌟 リード: 切り札{lead.rank}")
             else:
-                st.write(f"リードスート: **{lead.suit}** (マストフォロー)")
+                suit_emoji = {"Spade": "♠", "Heart": "♥", "Diamond": "♦", "Club": "♣"}
+                st.info(f"{suit_emoji.get(lead.suit, '')} リード: {lead.suit}（マストフォロー）")
         else:
-            st.write("リードです。（切り札でリード不可）")
+            st.info("📢 あなたがリードです（切り札でリード不可）")
 
+        # 既出のカードを表示
+        plays = context["plays_so_far"]
+        if plays:
+            st.write("既出:")
+            # 2列で表示
+            play_cols = st.columns(min(len(plays), 2))
+            for i, (pname, card_str) in enumerate(plays):
+                with play_cols[i % 2]:
+                    st.markdown(f"**{pname}**: {card_str}")
+
+        st.divider()
         hand = context["hand"]
         legal = context["legal"]
-        legal_strs = [str(c) for c in legal]
 
-        st.write("手札:")
-        card_cols = st.columns(len(hand))
-        for i, card in enumerate(hand):
-            with card_cols[i]:
-                display_str = card_display(card)
-                is_legal = card in legal
-                if is_legal:
-                    if st.button(display_str, key=f"card_{i}", type="primary"):
-                        game.provide_input(card)
-                        run_until_input()
-                        st.rerun()
-                else:
-                    st.button(display_str, key=f"card_{i}", disabled=True)
+        st.write("カードを選んでプレイ:")
+        # 2列×2行のグリッド（残り手札は最大4枚）
+        num_cards = len(hand)
+        cols_per_row = 2
+        rows = (num_cards + cols_per_row - 1) // cols_per_row
+        for row in range(rows):
+            cols = st.columns(cols_per_row)
+            for col in range(cols_per_row):
+                idx = row * cols_per_row + col
+                if idx < num_cards:
+                    card = hand[idx]
+                    with cols[col]:
+                        display_str = card_display(card)
+                        is_legal = card in legal
+                        if is_legal:
+                            if st.button(display_str, key=f"card_{idx}", type="primary", use_container_width=True):
+                                game.provide_input(card)
+                                run_until_input()
+                                st.rerun()
+                        else:
+                            st.button(display_str, key=f"card_{idx}", disabled=True, use_container_width=True)
 
     elif req_type == "upgrade":
-        st.subheader(f"アップグレード選択 - {player.name}")
+        st.subheader(f"📜 報酬を選択")
         available = context["available"]
 
-        st.write("報酬を選んでください:")
-        options = [f"{upgrade_name(u)} [{u}]" for u in available]
+        st.info("トリック獲得順に選択できます")
+
+        # 各アップグレードをボタンで選択（タップしやすく）
+        for u in available:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"**{upgrade_name(u)}**")
+                st.caption(upgrade_description(u))
+            with col2:
+                if st.button("選択", key=f"upgrade_{u}", use_container_width=True):
+                    game.provide_input(u)
+                    run_until_input()
+                    st.rerun()
+
+        st.divider()
+        # 金貨オプション
         gold_amount = game.config.take_gold_instead
-        options.append(f"代わりに {gold_amount} 金貨を取る")
-
-        choice = st.radio("選択:", options, index=0)
-
-        if st.button("確定", type="primary"):
-            if choice.startswith("代わりに"):
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"**💰 {gold_amount} 金貨を取る**")
+            st.caption("アップグレードを取らない")
+        with col2:
+            if st.button("選択", key="upgrade_gold", use_container_width=True):
                 game.provide_input("GOLD")
-            else:
-                # Extract upgrade key from choice
-                idx = options.index(choice)
-                game.provide_input(available[idx])
-            run_until_input()
-            st.rerun()
+                run_until_input()
+                st.rerun()
 
     elif req_type == "worker_actions":
-        st.subheader(f"ワーカー配置 - {player.name}")
+        st.subheader(f"👷 ワーカー配置")
         num_workers = context["num_workers"]
         can_use_ritual = context.get("can_use_ritual", False)
 
-        st.write(f"{num_workers}人のワーカーにアクションを割り当てます:")
+        st.info(f"{num_workers}人のワーカーにアクションを割り当て")
+
+        # アクションの説明
+        action_info = {
+            "TRADE": "💰 交易（金貨を獲得）",
+            "HUNT": "⚔️ 討伐（VPを獲得）",
+            "RECRUIT": "🧑‍🤝‍🧑 雇用（次ラウンドからワーカー+1）"
+        }
+
         actions = []
         for i in range(num_workers):
-            action = st.selectbox(
-                f"ワーカー {i+1}:",
+            st.markdown(f"**ワーカー {i+1}**")
+            # ラジオボタンで横並び（モバイルでタップしやすく）
+            action = st.radio(
+                f"ワーカー{i+1}のアクション",
                 options=ACTIONS,
-                key=f"worker_{i}"
+                format_func=lambda x: action_info.get(x, x),
+                key=f"worker_{i}",
+                horizontal=True,
+                label_visibility="collapsed"
             )
             actions.append(action)
 
@@ -618,13 +814,16 @@ if pending is not None:
             st.markdown("🔮 **《大儀式の執行者》** - 追加アクション実行可能")
             use_ritual = st.checkbox("追加アクションを実行する", key="use_ritual")
             if use_ritual:
-                ritual_action = st.selectbox(
+                ritual_action = st.radio(
                     "追加で実行するアクション:",
                     options=ACTIONS,
-                    key="ritual_action"
+                    format_func=lambda x: action_info.get(x, x),
+                    key="ritual_action",
+                    horizontal=True
                 )
 
-        if st.button("アクション確定", type="primary"):
+        st.divider()
+        if st.button("✅ アクション確定", type="primary", use_container_width=True):
             response = {
                 "actions": actions,
                 "ritual_action": ritual_action,
@@ -636,7 +835,7 @@ if pending is not None:
 else:
     # No pending input - show current phase info
     if state["game_over"]:
-        st.subheader("最終結果")
+        st.subheader("🏁 最終結果")
         # Get sorted players
         sorted_players = sorted(
             state["players"],
@@ -644,8 +843,23 @@ else:
             reverse=True
         )
         for i, p in enumerate(sorted_players, start=1):
-            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, "")
-            st.write(f"{medal} **{i}. {p['name']}** - VP: {p['vp']}, 金貨: {p['gold']}")
+            medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, "  ")
+            is_human = not p["is_bot"]
+            player_marker = " 👤" if is_human else ""
+            # カードスタイルで表示
+            st.markdown(f"""
+            <div style="padding:0.75rem; margin:0.5rem 0; border-radius:10px;
+                        background: {'linear-gradient(135deg, #ffd700 0%, #ffb347 100%)' if i == 1 else '#f0f2f6'};">
+                <span style="font-size:1.5rem;">{medal}</span>
+                <strong>{i}位 {p['name']}{player_marker}</strong><br>
+                🏆 {p['vp']}VP  |  💰 {p['gold']}G
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.divider()
+        if st.button("🔄 もう一度プレイ", type="primary", use_container_width=True):
+            init_game()
+            st.rerun()
     else:
         st.info(f"フェーズ: {state['phase']}")
 
