@@ -432,9 +432,8 @@ for i, p in enumerate(state["players"]):
         if not p["is_bot"]:
             name += " (あなた)"
         else:
-            # CPUの性格を表示
-            if p.get("strategy_name"):
-                name += f" [{p['strategy_name']}]"
+            # CPUの性格はUIには非表示
+            pass
         st.markdown(f"**{name}**")
         st.text(f"金貨: {p['gold']}  VP: {p['vp']}")
         st.text(f"ワーカー: {p['workers']}")
