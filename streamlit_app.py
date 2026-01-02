@@ -580,16 +580,21 @@ for row in range(2):
                 st.caption(f"👷 {p['workers']}人")
             # 交易・討伐レベルをコンパクトに
             st.caption(f"交易Lv{p['trade_level']} / 討伐Lv{p['hunt_level']}")
-            # Show recruit upgrade
+            # Show recruit upgrade (タップで効果表示)
             if p.get("recruit_upgrade"):
-                upgrade_short = {"RECRUIT_WAGE_DISCOUNT": "給料軽減"}.get(p["recruit_upgrade"], "")
-                st.caption(f"📦 {upgrade_short}")
-            # Show witches
+                u = p["recruit_upgrade"]
+                with st.popover(f"📦 {upgrade_name(u)}", help="タップで効果表示"):
+                    st.write(upgrade_description(u))
+            # Show witches (タップで効果表示)
             if p.get("witches"):
-                witch_names = {"WITCH_BLACKROAD": "黒路", "WITCH_BLOODHUNT": "血誓", "WITCH_HERD": "群導",
+                witch_short = {"WITCH_BLACKROAD": "黒路", "WITCH_BLOODHUNT": "血誓", "WITCH_HERD": "群導",
                               "WITCH_RITUAL": "大儀式", "WITCH_BARRIER": "結界"}
-                witch_display = ", ".join(witch_names.get(w, w) for w in p["witches"])
-                st.caption(f"🧙 {witch_display}")
+                witch_cols = st.columns(len(p["witches"]))
+                for wi, w in enumerate(p["witches"]):
+                    with witch_cols[wi]:
+                        with st.popover(f"🧙 {witch_short.get(w, w)}", help="タップで効果表示"):
+                            st.markdown(f"**{upgrade_name(w)}**")
+                            st.write(upgrade_description(w))
             # Show declaration info during trick phase
             if p.get("declared_tricks", 0) > 0 or p.get("tricks_won", 0) > 0:
                 st.markdown(f"🎯 宣言 {p['declared_tricks']} / 獲得 {p['tricks_won']}")
