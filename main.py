@@ -55,6 +55,22 @@ DEBT_PENALTY_MULTIPLIER = 2
 # ペナルティ上限（None = 無制限）
 DEBT_PENALTY_CAP: Optional[int] = None
 
+# === 恩寵ポイントシステム（テストモード） ===
+GRACE_TEST_MODE = True  # テストモードON/OFF
+# 閾値ボーナス（累計ではなく、到達した最高の閾値のみ適用）
+GRACE_THRESHOLD_BONUS = [
+    (15, 8),   # 15点以上 → +8VP
+    (10, 5),   # 10点以上 → +5VP
+    (5, 2),    # 5点以上 → +2VP
+]
+# 恩寵消費効果: シール前に手札1枚をデッキトップと交換
+GRACE_HAND_SWAP_COST = 1
+# 恩寵獲得: 儀式アクション（金貨 → 恩寵）
+GRACE_RITUAL_GOLD_COST = 3
+GRACE_RITUAL_GAIN = 2
+# 恩寵獲得: 宣言0成功
+GRACE_DECLARATION_ZERO_BONUS = 1
+
 ACTIONS = ["TRADE", "HUNT", "RECRUIT"]
 
 # === CPU性格定義 ===
@@ -237,11 +253,17 @@ class Player:
     # Recruit upgrades (pick one of them, overwrite allowed)
     recruit_upgrade: Optional[str] = None  # "RECRUIT_WAGE_DISCOUNT" or None
 
+    # Ritual upgrade (恩寵システム用)
+    has_ritual: bool = False  # UP_RITUAL取得済みかどうか
+
     # Permanent witches (flavor for tie-break)
     witches: List[str] = field(default_factory=list)
 
     # Witch ability usage this round
     ritual_used_this_round: bool = False  # WITCH_RITUAL: アクション再実行
+
+    # Grace points (恩寵ポイント) - テストモード用
+    grace_points: int = 0
 
     # Trick-taking round state
     tricks_won_this_round: int = 0
@@ -270,6 +292,7 @@ def snapshot_players(players: List[Player]) -> List[Dict[str, Any]]:
             "strategy_name": STRATEGIES[p.strategy]['name'] if p.strategy else None,
             "gold": p.gold,
             "vp": p.vp,
+            "grace_points": p.grace_points,  # 恩寵ポイント
             "workers": p.basic_workers_total,
             "new_hires_pending": p.basic_workers_new_hires,
             "upgraded_workers": p.upgraded_workers,
@@ -278,6 +301,7 @@ def snapshot_players(players: List[Player]) -> List[Dict[str, Any]]:
             "trade_yield": p.trade_yield(),
             "hunt_yield": p.hunt_yield(),
             "recruit_upgrade": p.recruit_upgrade,
+            "has_ritual": p.has_ritual,  # 儀式の祭壇取得済み
             "witches": p.witches[:],
             "declared_tricks": p.declared_tricks,
             "tricks_won": p.tricks_won_this_round,
@@ -305,15 +329,20 @@ def prompt_choice(prompt: str, choices: List[str], default: Optional[str] = None
 def print_state(players: List[Player], round_no: int) -> None:
     print("\n" + "=" * 72)
     print(f"ROUND {round_no+1}/{ROUNDS} STATE")
+    if GRACE_TEST_MODE:
+        print("[恩寵テストモード ON]")
     print("-" * 72)
     for p in players:
-        print(
+        base_info = (
             f"{p.name:10s} | Gold={p.gold:2d} VP={p.vp:2d} "
             f"Workers={p.basic_workers_total:2d} (pending={p.basic_workers_new_hires:2d}) "
             f"TradeY={p.trade_yield()}(Lv{p.trade_level}) "
             f"HuntY={p.hunt_yield()}(Lv{p.hunt_level}) "
             f"Witches={p.permanent_witch_count()}"
         )
+        if GRACE_TEST_MODE:
+            base_info += f" Grace={p.grace_points}"
+        print(base_info)
     print("=" * 72)
 
 
@@ -357,11 +386,14 @@ def deal_round_cards(
     logger: Optional[JsonlLogger],
     max_rank: int = 6,
     num_decks: int = NUM_DECKS,
-) -> Dict[str, List[Card]]:
+) -> Tuple[Dict[str, List[Card]], List[Card]]:
     """
     ラウンドごとにデッキをリシャッフルして配札。
     2デッキ（48カード）+ 切り札4枚 = 52枚
     4人×5枚 = 20枚必要
+
+    Returns:
+        Tuple of (round_hands, remaining_deck)
     """
     deck: List[Card] = []
     for _ in range(num_decks):
@@ -386,9 +418,10 @@ def deal_round_cards(
             "hands": {name: [str(c) for c in cards] for name, cards in round_hands.items()},
             "cards_per_player": CARDS_PER_SET,
             "deck_size": num_decks * 24 + TRUMP_COUNT,
+            "remaining_deck_size": len(deck),
         })
 
-    return round_hands
+    return round_hands, deck
 
 
 # ======= Upgrades =======
@@ -399,6 +432,7 @@ ALL_UPGRADES = [
     "UP_HUNT",
     "RECRUIT_INSTANT",
     "RECRUIT_WAGE_DISCOUNT",
+    "UP_RITUAL",  # 儀式: 金貨を恩寵に変換（テストモード用）
 ]
 
 # 魔女カード（ラウンド3のみ登場）
@@ -409,6 +443,7 @@ ALL_WITCHES = [
     "WITCH_RITUAL",
     "WITCH_BARRIER",
     "WITCH_TREASURE",  # 新魔女: ゲーム終了時1金→1VP変換
+    "WITCH_BLESSING",  # 祝福の魔女: 毎ラウンド終了時に恩寵+1（テストモード用）
 ]
 
 # デフォルトで有効なアップグレード（魔女を除く）
@@ -423,6 +458,7 @@ UPGRADE_POOL_COUNTS = {
     "UP_HUNT": 6,
     "RECRUIT_INSTANT": 2,
     "RECRUIT_WAGE_DISCOUNT": 2,
+    "UP_RITUAL": 2,  # 儀式（テストモード用）
 }
 
 # 魔女カードのプール内の枚数
@@ -433,6 +469,7 @@ WITCH_POOL_COUNTS = {
     "WITCH_RITUAL": 1,
     "WITCH_BARRIER": 1,
     "WITCH_TREASURE": 1,
+    "WITCH_BLESSING": 1,  # 祝福の魔女（テストモード用）
 }
 
 
@@ -504,12 +541,14 @@ def upgrade_name(u: str) -> str:
         "UP_HUNT": "魔物討伐 改善（レベル+1）",
         "RECRUIT_INSTANT": "見習い魔女派遣（2金で+2人）",
         "RECRUIT_WAGE_DISCOUNT": "育成負担軽減の護符（雇用ターン給料軽減）",
+        "UP_RITUAL": "儀式の祭壇（金貨→恩寵）",
         "WITCH_BLACKROAD": "《黒路の魔女》",
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
         "WITCH_HERD": "《群導の魔女》",
         "WITCH_RITUAL": "《大儀式の執行者》",
         "WITCH_BARRIER": "《結界織りの魔女》",
         "WITCH_TREASURE": "《財宝変換の魔女》",
+        "WITCH_BLESSING": "《祝福の魔女》",
     }
     return mapping.get(u, u)
 
@@ -521,12 +560,14 @@ def upgrade_description(u: str) -> str:
         "UP_HUNT": "討伐アクションの獲得VPが+1増加します。最大レベル2まで強化可能。",
         "RECRUIT_INSTANT": "2金支払い、即座に見習い2人を獲得。以後給料支払い不要。",
         "RECRUIT_WAGE_DISCOUNT": "雇用したターンの給料支払いが軽減されます。",
+        "UP_RITUAL": f"【儀式アクション】{GRACE_RITUAL_GOLD_COST}金貨を支払い、恩寵{GRACE_RITUAL_GAIN}点を獲得。",
         "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+1金",
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
         "WITCH_RITUAL": "【効果】各ラウンド1回、選んだ基本アクションをもう一度実行",
         "WITCH_BARRIER": "【効果】各ラウンド最初にHUNTを行った場合、追加で+1VP",
         "WITCH_TREASURE": "【効果】ゲーム終了時、1金貨につき1VPに変換可能",
+        "WITCH_BLESSING": "【効果】毎ラウンド終了時に恩寵+1点を獲得",
     }
     return descriptions.get(u, "説明なし")
 
@@ -569,6 +610,12 @@ WITCH_FLAVOR = {
 
 彼女の魔法は、金貨の価値を高める。
 だが、その代償を知る者は少ない。""",
+
+    "WITCH_BLESSING": """《祝福の魔女》
+役割：恩寵獲得・長期戦略
+
+協会への忠誠を示す者に、彼女は静かに恩寵を与える。
+その祝福は目に見えないが、確かに存在する。""",
 }
 
 
@@ -577,6 +624,9 @@ def can_take_upgrade(player: Player, u: str) -> bool:
         return player.trade_level < 2
     if u == "UP_HUNT":
         return player.hunt_level < 2
+    if u == "UP_RITUAL":
+        # 儀式はテストモードのみ、かつ未取得の場合のみ取得可能
+        return GRACE_TEST_MODE and not player.has_ritual
     return True
 
 
@@ -592,6 +642,9 @@ def apply_upgrade(player: Player, u: str) -> None:
         player.upgraded_workers += 2
     elif u == "RECRUIT_WAGE_DISCOUNT":
         player.recruit_upgrade = u
+    elif u == "UP_RITUAL":
+        # 儀式の祭壇を取得（RITUALアクションが使用可能になる）
+        player.has_ritual = True
     elif u.startswith("WITCH_"):
         player.witches.append(u)
 
@@ -715,6 +768,14 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
             before = p.vp
             p.vp += DECLARATION_BONUS_VP
             print(f"宣言成功: {p.name} が {p.declared_tricks} トリックを的中 -> +{DECLARATION_BONUS_VP} VP")
+
+            # 恩寵システム: 宣言0成功で恩寵ボーナス
+            grace_bonus = 0
+            if GRACE_TEST_MODE and p.declared_tricks == 0:
+                grace_bonus = GRACE_DECLARATION_ZERO_BONUS
+                p.grace_points += grace_bonus
+                print(f"  (宣言0成功ボーナス: +{grace_bonus} 恩寵)")
+
             if logger:
                 logger.log("declaration_bonus", {
                     "round": round_no + 1,
@@ -724,7 +785,97 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
                     "vp_before": before,
                     "vp_after": p.vp,
                     "bonus_vp": DECLARATION_BONUS_VP,
+                    "grace_bonus": grace_bonus,
                 })
+
+
+def grace_hand_swap(
+    player: Player,
+    hand: List[Card],
+    deck: List[Card],
+    rng: random.Random,
+    logger: Optional[JsonlLogger] = None,
+    round_no: int = 0
+) -> bool:
+    """
+    恩寵消費で手札1枚をデッキトップと交換。
+    シール前に使用可能。1恩寵 = 1枚交換。
+    Returns True if swap was performed.
+    """
+    if not GRACE_TEST_MODE:
+        return False
+    if player.grace_points < GRACE_HAND_SWAP_COST:
+        return False
+    if len(deck) == 0:
+        return False
+
+    if player.is_bot:
+        # ボット: 最低ランクのカードを持っていて、かつ恩寵に余裕がある場合に交換を検討
+        non_trump = [c for c in hand if not c.is_trump()]
+        if not non_trump:
+            return False
+        worst_card = min(non_trump, key=lambda c: c.rank)
+        # ランクが3以下で、恩寵が3以上ある場合のみ交換（簡易ヒューリスティック）
+        if worst_card.rank <= 3 and player.grace_points >= 3:
+            # 交換実行
+            player.grace_points -= GRACE_HAND_SWAP_COST
+            hand.remove(worst_card)
+            new_card = deck.pop(0)
+            hand.append(new_card)
+            deck.append(worst_card)
+            rng.shuffle(deck)
+            if logger:
+                logger.log("grace_hand_swap", {
+                    "round": round_no + 1,
+                    "player": player.name,
+                    "swapped_out": str(worst_card),
+                    "swapped_in": str(new_card),
+                    "grace_remaining": player.grace_points,
+                })
+            return True
+        return False
+
+    # 人間プレイヤー
+    print(f"\n{player.name} 恩寵ポイント: {player.grace_points}")
+    print(f"手札交換可能 (コスト: {GRACE_HAND_SWAP_COST}恩寵)")
+    print("現在の手札:", " ".join(str(c) for c in hand))
+    while True:
+        s = input("交換するカードを入力 (例: S03) または Enter でスキップ: ").strip().upper()
+        if s == "":
+            return False
+
+        suit_map = {"S": "Spade", "H": "Heart", "D": "Diamond", "C": "Club", "T": "Trump"}
+        if len(s) < 2 or s[0] not in suit_map:
+            print("無効な入力です。")
+            continue
+        try:
+            rank = int(s[1:])
+        except ValueError:
+            print("無効な入力です。")
+            continue
+        chosen = Card(suit_map[s[0]], rank)
+        if chosen not in hand:
+            print("そのカードは持っていません。")
+            continue
+
+        # 交換実行
+        player.grace_points -= GRACE_HAND_SWAP_COST
+        hand.remove(chosen)
+        new_card = deck.pop(0)
+        hand.append(new_card)
+        deck.append(chosen)
+        rng.shuffle(deck)
+        print(f"交換完了: {chosen} → {new_card}")
+        print(f"残り恩寵: {player.grace_points}")
+        if logger:
+            logger.log("grace_hand_swap", {
+                "round": round_no + 1,
+                "player": player.name,
+                "swapped_out": str(chosen),
+                "swapped_in": str(new_card),
+                "grace_remaining": player.grace_points,
+            })
+        return True
 
 
 def seal_cards(player: Player, hand: List[Card], set_index: int) -> List[Card]:
@@ -869,11 +1020,18 @@ def choose_card(player: Player, lead_card: Optional[Card], hand: List[Card]) -> 
         return chosen
 
 
-def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, logger: Optional[JsonlLogger]) -> int:
+def run_trick_taking(
+    players: List[Player],
+    round_no: int,
+    rng: random.Random,
+    logger: Optional[JsonlLogger],
+    remaining_deck: Optional[List[Card]] = None
+) -> int:
     """
     Flow:
       - Use round hand from player.sets[round_no]
       - Declaration after seeing round hand
+      - (Grace test mode) Optional hand swap using grace points
       - Seal (CARDS_PER_SET - TRICKS_PER_ROUND) cards
       - Play TRICKS_PER_ROUND tricks with must-follow
       - Declaration bonus
@@ -903,6 +1061,14 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
         })
 
     print("宣言一覧:", ", ".join(f"{p.name}:{p.declared_tricks}" for p in players))
+
+    # 恩寵消費: シール前に手札交換
+    if GRACE_TEST_MODE and remaining_deck:
+        print("\n--- 恩寵消費フェーズ (手札交換) ---")
+        for p in players:
+            if p.grace_points >= GRACE_HAND_SWAP_COST:
+                hand = full_hands[p.name]
+                grace_hand_swap(p, hand, remaining_deck, rng, logger, round_no)
 
     need_seal = CARDS_PER_SET - TRICKS_PER_ROUND
     print(f"\n--- 封印フェーズ ({need_seal}枚を封印) ---")
@@ -1016,12 +1182,26 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
     n = player.basic_workers_total
     actions: List[str] = []
 
+    # 利用可能なアクションを決定
+    available_actions = ACTIONS[:]
+    if GRACE_TEST_MODE and player.has_ritual:
+        available_actions = ACTIONS + ["RITUAL"]
+
     if player.is_bot:
         strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
         expected_wage = calc_expected_wage(player, round_no)
         gold_needed = expected_wage - player.gold
+        current_gold = player.gold  # Track gold for RITUAL decisions
 
         for _ in range(n):
+            # ボットの儀式選択: 金貨に余裕があり、儀式が可能な場合、一定確率で選択
+            if (GRACE_TEST_MODE and player.has_ritual and
+                current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
+                player.rng.random() < 0.3):  # 30%の確率で儀式を選択
+                actions.append("RITUAL")
+                current_gold -= GRACE_RITUAL_GOLD_COST
+                continue
+
             if player.strategy == 'CONSERVATIVE':
                 # 堅実: 常にTRADE
                 actions.append("TRADE")
@@ -1050,16 +1230,20 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
         return actions
 
     print(f"\n{player.name} {n}人の見習いにアクションを割り当てます。")
+    if GRACE_TEST_MODE and player.has_ritual:
+        print(f"  (儀式の祭壇あり: RITUAL選択可能 - {GRACE_RITUAL_GOLD_COST}金→{GRACE_RITUAL_GAIN}恩寵)")
     for i in range(n):
-        a = prompt_choice(f" ワーカー{i+1}のアクション", ACTIONS, default="TRADE")
+        a = prompt_choice(f" ワーカー{i+1}のアクション", available_actions, default="TRADE")
         actions.append(a)
     return actions
 
 
 def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
-    before = {"gold": player.gold, "vp": player.vp, "new_hires": player.basic_workers_new_hires}
+    before = {"gold": player.gold, "vp": player.vp, "new_hires": player.basic_workers_new_hires,
+              "grace_points": player.grace_points}
     first_hunt_done = False  # Track for WITCH_BARRIER
     witch_bonuses: List[str] = []
+    grace_bonuses: List[str] = []
 
     for a in actions:
         if a == "TRADE":
@@ -1081,11 +1265,19 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
             first_hunt_done = True
         elif a == "RECRUIT":
             player.basic_workers_new_hires += 1
+        elif a == "RITUAL":
+            # 儀式アクション: 金貨を恩寵に変換（テストモード用）
+            if GRACE_TEST_MODE and player.has_ritual:
+                if player.gold >= GRACE_RITUAL_GOLD_COST:
+                    player.gold -= GRACE_RITUAL_GOLD_COST
+                    player.grace_points += GRACE_RITUAL_GAIN
+                    grace_bonuses.append(f"儀式: -{GRACE_RITUAL_GOLD_COST}金 → +{GRACE_RITUAL_GAIN}恩寵")
         else:
             raise ValueError(f"Unknown action: {a}")
 
-    after = {"gold": player.gold, "vp": player.vp, "new_hires": player.basic_workers_new_hires}
-    return {"before": before, "after": after, "witch_bonuses": witch_bonuses}
+    after = {"gold": player.gold, "vp": player.vp, "new_hires": player.basic_workers_new_hires,
+             "grace_points": player.grace_points}
+    return {"before": before, "after": after, "witch_bonuses": witch_bonuses, "grace_bonuses": grace_bonuses}
 
 
 def pay_wages_and_debt(
@@ -1228,7 +1420,7 @@ def main():
         print_state(players, round_no)
 
         # ラウンド毎にデッキをリシャッフルして配札
-        round_hands = deal_round_cards(players, round_no, rng, logger)
+        round_hands, remaining_deck = deal_round_cards(players, round_no, rng, logger)
         print(f"\n--- ラウンド{round_no + 1} カード配布 (リシャッフル) ---")
 
         # ラウンド3（WITCH_ROUND）は魔女カード、それ以外は通常アップグレード
@@ -1251,7 +1443,7 @@ def main():
             "discard_pile": len(upgrade_deck.discard) if not is_witch_round else 0,
         })
 
-        leader_index = run_trick_taking(players, round_no, rng, logger)
+        leader_index = run_trick_taking(players, round_no, rng, logger, remaining_deck)
 
         ranked = rank_players_for_upgrade(players, leader_index)
         logger.log("upgrade_pick_order", {
@@ -1362,7 +1554,43 @@ def main():
                     "activated": activated,
                 })
 
+        # WITCH_BLESSING: 毎ラウンド終了時に恩寵+1
+        if GRACE_TEST_MODE:
+            for p in players:
+                if "WITCH_BLESSING" in p.witches:
+                    p.grace_points += 1
+                    print(f"《祝福の魔女》: {p.name} が +1 恩寵を獲得")
+                    logger.log("witch_blessing_grace", {
+                        "round": round_no + 1,
+                        "player": p.name,
+                        "grace_points": p.grace_points,
+                    })
+
         logger.log("round_end", {"round": round_no + 1, "players": snapshot_players(players)})
+
+    # 恩寵ポイント閾値ボーナス（ゲーム終了時）
+    if GRACE_TEST_MODE:
+        print("\n--- 恩寵ポイント閾値ボーナス ---")
+        for p in players:
+            # 最高の閾値のみ適用（累計ではない）
+            threshold_bonus = 0
+            threshold_reached = 0
+            for threshold, bonus in GRACE_THRESHOLD_BONUS:
+                if p.grace_points >= threshold:
+                    threshold_bonus = bonus
+                    threshold_reached = threshold
+                    break
+            if threshold_bonus > 0:
+                p.vp += threshold_bonus
+                print(f"{p.name}: 恩寵{p.grace_points}点 ({threshold_reached}+到達) → +{threshold_bonus}VP")
+            else:
+                print(f"{p.name}: 恩寵{p.grace_points}点 (閾値未到達)")
+            logger.log("grace_threshold_bonus", {
+                "player": p.name,
+                "grace_points": p.grace_points,
+                "threshold_reached": threshold_reached,
+                "bonus_vp": threshold_bonus,
+            })
 
     # ゲーム終了時: 金貨をVPに変換
     print("\n--- 金貨→VP変換 ---")
@@ -1388,9 +1616,10 @@ def main():
 
     print("\n=== ゲーム終了 ===")
     for i, p in enumerate(players_sorted, start=1):
+        grace_info = f" 恩寵={p.grace_points}" if GRACE_TEST_MODE else ""
         print(f"{i}. {p.name} VP={p.vp} 金貨={p.gold} ワーカー={p.basic_workers_total} "
               f"交易={p.trade_yield()}(Lv{p.trade_level}) 討伐={p.hunt_yield()}(Lv{p.hunt_level}) "
-              f"魔女={p.permanent_witch_count()}")
+              f"魔女={p.permanent_witch_count()}{grace_info}")
     print(f"\n勝者: {players_sorted[0].name}")
     print(f"\nLog written to: {LOG_PATH}")
 
@@ -1880,7 +2109,7 @@ def run_single_game_quiet(
 
     for round_no in range(ROUNDS):
         # ラウンド毎にデッキをリシャッフルして配札
-        deal_round_cards(players, round_no, rng, None, max_rank, num_decks)
+        _, _ = deal_round_cards(players, round_no, rng, None, max_rank, num_decks)
 
         # ラウンド3は魔女、それ以外は通常アップグレード
         is_witch_round = (round_no == WITCH_ROUND)
@@ -2227,7 +2456,7 @@ def run_single_game_with_debt_config(
 
     for round_no in range(ROUNDS):
         # ラウンド毎にデッキをリシャッフルして配札
-        deal_round_cards(players, round_no, rng, None)
+        _, _ = deal_round_cards(players, round_no, rng, None)
 
         # ラウンド3は魔女、それ以外は通常アップグレード
         is_witch_round = (round_no == WITCH_ROUND)
