@@ -575,7 +575,7 @@ for row in range(2):
             # ワーカーと給料を1行に
             round_no = state["round_no"]
             if round_no < len(WAGE_CURVE):
-                st.caption(f"👷 {p['workers']}人 (給料: {WAGE_CURVE[round_no]}G/{UPGRADED_WAGE_CURVE[round_no]}G)")
+                st.caption(f"👷 {p['workers']}人 (給料: 初期{WAGE_CURVE[round_no]}G / 雇用{UPGRADED_WAGE_CURVE[round_no]}G)")
             else:
                 st.caption(f"👷 {p['workers']}人")
             # 交易・討伐レベルをコンパクトに
@@ -851,10 +851,17 @@ else:
             medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, "  ")
             is_human = not p["is_bot"]
             player_marker = " 👤" if is_human else ""
-            # カードスタイルで表示
+            # 順位ごとの背景色
+            bg_colors = {
+                1: "linear-gradient(135deg, #ffd700 0%, #ffb347 100%)",
+                2: "linear-gradient(135deg, #c0c0c0 0%, #a8a8a8 100%)",
+                3: "linear-gradient(135deg, #cd7f32 0%, #b87333 100%)",
+            }
+            bg = bg_colors.get(i, "#e2e8f0")
+            # カードスタイルで表示（文字色は常に黒）
             st.markdown(f"""
             <div style="padding:0.75rem; margin:0.5rem 0; border-radius:10px;
-                        background: {'linear-gradient(135deg, #ffd700 0%, #ffb347 100%)' if i == 1 else '#f0f2f6'};">
+                        background: {bg}; color: #000;">
                 <span style="font-size:1.5rem;">{medal}</span>
                 <strong>{i}位 {p['name']}{player_marker}</strong><br>
                 🏆 {p['vp']}VP  |  💰 {p['gold']}G
