@@ -36,8 +36,8 @@ SETS_PER_GAME = 4
 REVEAL_UPGRADES = 5                # players + 1 (for 4p => 5)
 
 START_GOLD = 7
-WAGE_CURVE = [1, 1, 2, 2]  # 初期ワーカーの給料（R4緩和: 3→2）
-UPGRADED_WAGE_CURVE = [1, 2, 3, 4]  # 雇用したワーカーの給料（全体緩和）
+WAGE_CURVE = [1, 1, 2, 2, 2, 3, 3, 3]  # 初期ワーカーの給料（8R対応）
+UPGRADED_WAGE_CURVE = [1, 2, 3, 4, 4, 5, 5, 6]  # 雇用したワーカーの給料（8R対応）
 INITIAL_WORKERS = 2  # 初期ワーカー数
 RESCUE_GOLD_FOR_4TH = 2
 TAKE_GOLD_INSTEAD = 2
@@ -192,6 +192,7 @@ class GameConfig:
     take_gold_instead: int = TAKE_GOLD_INSTEAD
     rescue_gold_for_4th: int = RESCUE_GOLD_FOR_4TH
     enabled_upgrades: Optional[List[str]] = None  # None = 全アップグレード有効
+    rounds: int = ROUNDS  # ゲームのラウンド数（4 or 8）
 
     def to_dict(self) -> Dict[str, Any]:
         """設定を辞書形式で返す"""
@@ -205,6 +206,7 @@ class GameConfig:
             "take_gold_instead": self.take_gold_instead,
             "rescue_gold_for_4th": self.rescue_gold_for_4th,
             "enabled_upgrades": self.enabled_upgrades,
+            "rounds": self.rounds,
         }
 
 
@@ -1311,6 +1313,7 @@ class GameEngine:
         """Return current game state for display."""
         return {
             "round_no": self.round_no,
+            "rounds": self.config.rounds,
             "phase": self.phase,
             "sub_phase": self.sub_phase,
             "players": snapshot_players(self.players),
@@ -1405,11 +1408,11 @@ class GameEngine:
 
         # Phase: round_start
         if self.phase == "round_start":
-            if self.round_no >= ROUNDS:
+            if self.round_no >= self.config.rounds:
                 self._finish_game()
                 return False
 
-            self._log(f"=== ラウンド {self.round_no + 1}/{ROUNDS} ===")
+            self._log(f"=== ラウンド {self.round_no + 1}/{self.config.rounds} ===")
             self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES, self.config.enabled_upgrades)
             self._log(f"アップグレード: {', '.join(upgrade_name(u) for u in self.revealed_upgrades)}")
 

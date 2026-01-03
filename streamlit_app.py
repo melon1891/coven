@@ -394,6 +394,7 @@ with st.sidebar:
     # 設定をsession_stateで管理
     if "game_config" not in st.session_state:
         st.session_state.game_config = {
+            "rounds": ROUNDS,
             "start_gold": START_GOLD,
             "initial_workers": INITIAL_WORKERS,
             "declaration_bonus_vp": DECLARATION_BONUS_VP,
@@ -404,6 +405,19 @@ with st.sidebar:
             "rescue_gold_for_4th": RESCUE_GOLD_FOR_4TH,
             "enabled_upgrades": DEFAULT_ENABLED_UPGRADES[:],
         }
+
+    with st.expander("🎲 ゲームモード", expanded=False):
+        rounds_options = [4, 8]
+        current_rounds = st.session_state.game_config.get("rounds", ROUNDS)
+        rounds_index = rounds_options.index(current_rounds) if current_rounds in rounds_options else 0
+        st.session_state.game_config["rounds"] = st.radio(
+            "ラウンド数",
+            options=rounds_options,
+            index=rounds_index,
+            format_func=lambda x: f"{x}ラウンド（{'ショート' if x == 4 else 'ロング'}）",
+            help="4ラウンド: 短時間プレイ、8ラウンド: 長期戦略",
+            horizontal=True
+        )
 
     with st.expander("💰 初期リソース", expanded=False):
         st.session_state.game_config["start_gold"] = st.number_input(
@@ -507,7 +521,9 @@ with st.sidebar:
     with st.expander("📋 現在の設定値", expanded=False):
         config = st.session_state.game_config
         enabled_count = len(config.get("enabled_upgrades", ALL_UPGRADES))
+        rounds_setting = config.get("rounds", ROUNDS)
         st.markdown(f"""
+        - **ラウンド数**: {rounds_setting}R（{'ショート' if rounds_setting == 4 else 'ロング'}）
         - **初期金貨**: {config['start_gold']}G
         - **初期ワーカー**: {config['initial_workers']}人
         - **宣言ボーナス**: +{config['declaration_bonus_vp']}VP
@@ -544,6 +560,7 @@ def init_game():
             take_gold_instead=cfg["take_gold_instead"],
             rescue_gold_for_4th=cfg["rescue_gold_for_4th"],
             enabled_upgrades=enabled,
+            rounds=cfg.get("rounds", ROUNDS),
         )
     else:
         config = GameConfig()
@@ -597,7 +614,7 @@ with col1:
     if state["game_over"]:
         st.title("魔女協会 - ゲーム終了")
     else:
-        st.title(f"魔女協会 - ラウンド {state['round_no'] + 1}/{ROUNDS}")
+        st.title(f"魔女協会 - ラウンド {state['round_no'] + 1}/{state['rounds']}")
 with col2:
     if st.button("新規ゲーム"):
         init_game()
