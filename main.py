@@ -33,6 +33,7 @@ ROUNDS = 4
 TRICKS_PER_ROUND = 4               # play 4 tricks
 CARDS_PER_SET = 6                  # but see 6 cards, seal 2, play 4
 SETS_PER_GAME = 4
+NUM_DECKS = 2                      # 2デッキ: 6ランク×4スート×2 = 48枚 + 切り札4枚 = 52枚
 REVEAL_UPGRADES = 5                # players + 1 (for 4p => 5)
 
 START_GOLD = 7
@@ -346,6 +347,47 @@ def deal_fixed_sets(
         logger.log("deal_hands", {"seed": seed, "hands": hands, "cards_per_set": CARDS_PER_SET})
 
 
+def deal_round_cards(
+    players: List[Player],
+    round_no: int,
+    rng: random.Random,
+    logger: Optional[JsonlLogger],
+    max_rank: int = 6,
+    num_decks: int = NUM_DECKS,
+) -> Dict[str, List[Card]]:
+    """
+    ラウンド開始時にデッキをリシャッフルし、各プレイヤーに手札を配る。
+
+    デッキ構成: num_decks × 4スート × max_rank = 48枚 (デフォルト: 2×4×6) + 切り札4枚 = 52枚
+    各プレイヤーに CARDS_PER_SET 枚を配る。
+
+    Returns:
+        Dict[str, List[Card]]: プレイヤー名 -> 手札リスト
+    """
+    deck: List[Card] = []
+    for _ in range(num_decks):
+        deck.extend([Card(s, r) for s in SUITS for r in range(1, max_rank + 1)])
+    # 切り札カード追加（ランクなし、4枚）
+    trumps = [Card("Trump", 0) for _ in range(4)]
+    deck.extend(trumps)
+    rng.shuffle(deck)
+
+    round_hands: Dict[str, List[Card]] = {}
+    for p in players:
+        hand = [deck.pop() for _ in range(CARDS_PER_SET)]
+        round_hands[p.name] = hand
+
+    if logger:
+        logger.log("deal_round", {
+            "round": round_no + 1,
+            "deck_size": num_decks * 4 * max_rank + 4,
+            "cards_per_player": CARDS_PER_SET,
+            "hands": {name: [str(c) for c in cards] for name, cards in round_hands.items()},
+        })
+
+    return round_hands
+
+
 # ======= Upgrades =======
 
 # 利用可能なアップグレードのリスト（設定画面で使用）
@@ -582,7 +624,7 @@ def declare_tricks(player: Player, round_hand: List[Card], set_index: int) -> in
         v += trump_count
         return max(0, min(TRICKS_PER_ROUND, v))
 
-    print(f"\n{player.name} ラウンド手札 (セット#{set_index+1}, {CARDS_PER_SET}枚): " + " ".join(str(c) for c in round_hand))
+    print(f"\n{player.name} ラウンド手札 ({CARDS_PER_SET}枚): " + " ".join(str(c) for c in round_hand))
     while True:
         s = input(f"{player.name} トリック宣言 (0-{TRICKS_PER_ROUND}): ").strip()
         try:
@@ -754,24 +796,36 @@ def choose_card(player: Player, lead_card: Optional[Card], hand: List[Card]) -> 
         return chosen
 
 
-def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, logger: Optional[JsonlLogger]) -> int:
+def run_trick_taking(
+    players: List[Player],
+    round_no: int,
+    rng: random.Random,
+    logger: Optional[JsonlLogger],
+    round_hands: Optional[Dict[str, List[Card]]] = None,
+) -> int:
     """
     Flow:
-      - Prepare 6-card round hand (set_index)
+      - ラウンド開始時にリシャッフルして配られた手札を使用（round_hands指定時）
+      - または既存のセットを使用（後方互換性のため）
       - Declaration after seeing round hand
       - Seal 2 cards (unplayable), leaving 4
       - Play 4 tricks with normal must-follow (NO TRUMP)
       - Declaration bonus
     Returns leader_index used for tie-break ordering.
     """
-    set_index = round_no % SETS_PER_GAME
     leader_index = round_no % len(players)
 
     for p in players:
         p.tricks_won_this_round = 0
         p.ritual_used_this_round = False
 
-    full_hands: Dict[str, List[Card]] = {p.name: players[i].sets[set_index][:] for i, p in enumerate(players)}
+    # ラウンド毎のリシャッフル手札を使用、なければ既存セットから
+    if round_hands is not None:
+        full_hands: Dict[str, List[Card]] = {name: cards[:] for name, cards in round_hands.items()}
+        set_index = round_no  # リシャッフルモードではラウンド番号をセットインデックスとして使用
+    else:
+        set_index = round_no % SETS_PER_GAME
+        full_hands = {p.name: players[i].sets[set_index][:] for i, p in enumerate(players)}
 
     print("\n--- 宣言フェーズ (手札確認後) ---")
     for p in players:
@@ -819,7 +873,7 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
     for p in players:
         print(f"  {p.name}: {', '.join(str(c) for c in sealed_by_player[p.name])}")
 
-    print(f"\n--- トリックテイキング ラウンド{round_no+1}: セット#{set_index+1}使用 (6枚→封印2枚→4トリック) ---")
+    print(f"\n--- トリックテイキング ラウンド{round_no+1} (リシャッフル済み: 6枚→封印2枚→4トリック) ---")
     print(f"このラウンドのリーダー: {players[leader_index].name}")
 
     leader = leader_index
@@ -1084,6 +1138,9 @@ def main():
             "TRICKS_PER_ROUND": TRICKS_PER_ROUND,
             "CARDS_PER_SET": CARDS_PER_SET,
             "SETS_PER_GAME": SETS_PER_GAME,
+            "NUM_DECKS": NUM_DECKS,
+            "DECK_SIZE": NUM_DECKS * 4 * 6 + 4,  # 2デッキ×4スート×6ランク + 切り札4 = 52枚
+            "RESHUFFLE_PER_ROUND": True,
             "NO_TRUMP": True,
             "REVEAL_UPGRADES": REVEAL_UPGRADES,
             "START_GOLD": START_GOLD,
@@ -1094,16 +1151,17 @@ def main():
             "RESCUE_GOLD_FOR_4TH": RESCUE_GOLD_FOR_4TH,
             "TAKE_GOLD_INSTEAD": TAKE_GOLD_INSTEAD,
             "DECLARATION_BONUS_VP": DECLARATION_BONUS_VP,
-            "deal_seed": deal_seed,
             "rng_seed": 42,
         },
         "players": snapshot_players(players),
     })
 
-    deal_fixed_sets(players, seed=deal_seed, logger=logger)
-
     for round_no in range(ROUNDS):
         print_state(players, round_no)
+
+        # ラウンド毎にデッキをリシャッフルして配札
+        round_hands = deal_round_cards(players, round_no, rng, logger)
+        print(f"\n--- デッキリシャッフル完了 (ラウンド{round_no+1}) ---")
 
         revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
         print("\n公開されたアップグレード:")
@@ -1111,7 +1169,7 @@ def main():
             print(" -", upgrade_name(u), f"[{u}]")
         logger.log("reveal_upgrades", {"round": round_no + 1, "revealed": revealed[:]})
 
-        leader_index = run_trick_taking(players, round_no, rng, logger)
+        leader_index = run_trick_taking(players, round_no, rng, logger, round_hands=round_hands)
 
         ranked = rank_players_for_upgrade(players, leader_index)
         logger.log("upgrade_pick_order", {
@@ -1271,7 +1329,7 @@ class GameEngine:
             p.gold = self.config.start_gold
             p.basic_workers_total = self.config.initial_workers
 
-        deal_fixed_sets(self.players, seed=self.deal_seed, logger=None)
+        # ラウンド毎リシャッフルのため、ここでは配札しない
 
         self.round_no = 0
         self.phase = "round_start"  # Current phase
@@ -1413,14 +1471,16 @@ class GameEngine:
             self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES, self.config.enabled_upgrades)
             self._log(f"アップグレード: {', '.join(upgrade_name(u) for u in self.revealed_upgrades)}")
 
-            self.set_index = self.round_no % SETS_PER_GAME
+            self.set_index = self.round_no  # リシャッフルモードではラウンド番号を使用
             self.leader_index = self.round_no % len(self.players)
 
             for p in self.players:
                 p.tricks_won_this_round = 0
                 p.ritual_used_this_round = False
 
-            self.full_hands = {p.name: p.sets[self.set_index][:] for p in self.players}
+            # ラウンド毎にデッキをリシャッフルして配札
+            self.full_hands = deal_round_cards(self.players, self.round_no, self.rng, logger=None)
+            self._log(f"デッキリシャッフル完了 (52枚: 2デッキ×4スート×6ランク + 切り札4枚)")
             self.playable_hands = {}
             self.sealed_by_player = {}
             self.trick_history = []  # Clear trick history for new round
@@ -1694,19 +1754,19 @@ def run_single_game_quiet(
         Player("P4", is_bot=True, rng=random.Random(seed + 4), strategy=assign_random_strategy(bot_rng)),
     ]
 
-    deal_fixed_sets(players, seed=seed, logger=None, max_rank=max_rank,
-                    num_decks=num_decks)
-
     for round_no in range(ROUNDS):
         revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
-        set_index = round_no % SETS_PER_GAME
         leader_index = round_no % len(players)
 
         for p in players:
             p.tricks_won_this_round = 0
 
+        # ラウンド毎にデッキをリシャッフルして配札
+        full_hands = deal_round_cards(players, round_no, rng, logger=None,
+                                      max_rank=max_rank, num_decks=num_decks)
+        set_index = round_no  # リシャッフルモードではラウンド番号を使用
+
         # Declaration
-        full_hands = {p.name: p.sets[set_index][:] for p in players}
         for p in players:
             p.declared_tricks = declare_tricks(p, full_hands[p.name][:], set_index)
 
@@ -2007,8 +2067,6 @@ def run_single_game_with_debt_config(
         Player("P4", is_bot=True, rng=random.Random(seed + 4), strategy=assign_random_strategy(bot_rng)),
     ]
 
-    deal_fixed_sets(players, seed=seed, logger=None, max_rank=6, num_decks=4)
-
     # Track debt occurrences
     total_debt_events = 0
     total_debt_amount = 0
@@ -2016,14 +2074,16 @@ def run_single_game_with_debt_config(
 
     for round_no in range(ROUNDS):
         revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
-        set_index = round_no % SETS_PER_GAME
         leader_index = round_no % len(players)
 
         for p in players:
             p.tricks_won_this_round = 0
 
+        # ラウンド毎にデッキをリシャッフルして配札
+        full_hands = deal_round_cards(players, round_no, rng, logger=None)
+        set_index = round_no  # リシャッフルモードではラウンド番号を使用
+
         # Declaration
-        full_hands = {p.name: p.sets[set_index][:] for p in players}
         for p in players:
             p.declared_tricks = declare_tricks(p, full_hands[p.name][:], set_index)
 
