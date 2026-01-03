@@ -38,7 +38,7 @@ NUM_DECKS = 2                      # 2デッキ = 48カード (6ランク×4ス�
 TRUMP_COUNT = 4                    # 切り札4枚
 
 START_GOLD = 5
-WAGE_CURVE = [1, 1, 2, 2, 2, 3]  # 初期ワーカーの給料（6ラウンド対応）
+WAGE_CURVE = [1, 1, 2, 2, 2, 3, 3, 3]  # 初期ワーカーの給料（8R対応）
 # アップグレードワーカーは取得時2金支払い、以後給料なし
 UPGRADE_WORKER_COST = 2  # 取得時コスト
 INITIAL_WORKERS = 2  # 初期ワーカー数
@@ -244,6 +244,7 @@ class GameConfig:
     take_gold_instead: int = TAKE_GOLD_INSTEAD
     rescue_gold_for_4th: int = RESCUE_GOLD_FOR_4TH
     enabled_upgrades: Optional[List[str]] = None  # None = 全アップグレード有効
+    rounds: int = ROUNDS  # ゲームのラウンド数（4 or 8）
 
     def to_dict(self) -> Dict[str, Any]:
         """設定を辞書形式で返す"""
@@ -258,6 +259,7 @@ class GameConfig:
             "take_gold_instead": self.take_gold_instead,
             "rescue_gold_for_4th": self.rescue_gold_for_4th,
             "enabled_upgrades": self.enabled_upgrades,
+            "rounds": self.rounds,
         }
 
 
@@ -2046,6 +2048,7 @@ class GameEngine:
         display_plays = self.trick_plays if self.trick_plays else self.last_trick_plays
         return {
             "round_no": self.round_no,
+            "rounds": self.config.rounds,
             "phase": self.phase,
             "sub_phase": self.sub_phase,
             "players": snapshot_players(self.players),
