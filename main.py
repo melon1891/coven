@@ -29,15 +29,18 @@ from datetime import datetime
 # ======= Core Config =======
 SUITS = ["Spade", "Heart", "Diamond", "Club"]
 
-ROUNDS = 4
+ROUNDS = 6
 TRICKS_PER_ROUND = 4               # play 4 tricks
-CARDS_PER_SET = 6                  # but see 6 cards, seal 2, play 4
-SETS_PER_GAME = 4
+CARDS_PER_SET = 5                  # see 5 cards, seal 1, play 4
+SETS_PER_GAME = 6                  # match rounds
 REVEAL_UPGRADES = 5                # players + 1 (for 4p => 5)
+NUM_DECKS = 2                      # 2デッキ = 48カード (6ランク×4スート×2)
+TRUMP_COUNT = 4                    # 切り札4枚
 
 START_GOLD = 7
-WAGE_CURVE = [1, 1, 2, 2]  # 初期ワーカーの給料（R4緩和: 3→2）
-UPGRADED_WAGE_CURVE = [1, 2, 3, 4]  # 雇用したワーカーの給料（全体緩和）
+WAGE_CURVE = [1, 1, 2, 2, 2, 3]  # 初期ワーカーの給料（6ラウンド対応）
+# アップグレードワーカーは取得時2金支払い、以後給料なし
+UPGRADE_WORKER_COST = 2  # 取得時コスト
 INITIAL_WORKERS = 2  # 初期ワーカー数
 RESCUE_GOLD_FOR_4TH = 2
 TAKE_GOLD_INSTEAD = 2
@@ -225,6 +228,7 @@ class Player:
     # Workers
     basic_workers_total: int = INITIAL_WORKERS
     basic_workers_new_hires: int = 0  # hires that become active next round
+    upgraded_workers: int = 0  # workers that don't pay wages (acquired via RECRUIT_INSTANT)
 
     # Action levels (incremental improvements, 0..2)
     trade_level: int = 0  # yield 2..4
@@ -247,7 +251,7 @@ class Player:
     sets: List[List[Card]] = field(default_factory=list)
 
     def trade_yield(self) -> int:
-        return 2 + self.trade_level
+        return 2 + self.trade_level * 2  # 基礎2, Lv1=4, Lv2=6
 
     def hunt_yield(self) -> int:
         return 1 + self.hunt_level
@@ -268,6 +272,7 @@ def snapshot_players(players: List[Player]) -> List[Dict[str, Any]]:
             "vp": p.vp,
             "workers": p.basic_workers_total,
             "new_hires_pending": p.basic_workers_new_hires,
+            "upgraded_workers": p.upgraded_workers,
             "trade_level": p.trade_level,
             "hunt_level": p.hunt_level,
             "trade_yield": p.trade_yield(),
@@ -319,19 +324,18 @@ def deal_fixed_sets(
     seed: int,
     logger: Optional[JsonlLogger],
     max_rank: int = 6,
-    num_decks: int = 4,
+    num_decks: int = NUM_DECKS,
 ) -> None:
     """
-    Each player gets (SETS_PER_GAME * CARDS_PER_SET) cards.
-    Default: 4 decks (96 cards) + 4 trump cards = 100 cards total.
-    For 4p: needed = 4 * 4 * 6 = 96 cards => 4 cards surplus.
+    旧方式: ゲーム開始時に全ラウンド分のカードを配る。
+    現在はdeal_round_cardsを使用してラウンドごとにリシャッフル。
     """
     rng = random.Random(seed)
     deck: List[Card] = []
     for _ in range(num_decks):
         deck.extend([Card(s, r) for s in SUITS for r in range(1, max_rank + 1)])
     # 切り札カード追加（ランクなし、4枚）
-    trumps = [Card("Trump", 0) for _ in range(4)]
+    trumps = [Card("Trump", 0) for _ in range(TRUMP_COUNT)]
     deck.extend(trumps)
     rng.shuffle(deck)
 
@@ -346,6 +350,47 @@ def deal_fixed_sets(
         logger.log("deal_hands", {"seed": seed, "hands": hands, "cards_per_set": CARDS_PER_SET})
 
 
+def deal_round_cards(
+    players: List[Player],
+    round_no: int,
+    rng: random.Random,
+    logger: Optional[JsonlLogger],
+    max_rank: int = 6,
+    num_decks: int = NUM_DECKS,
+) -> Dict[str, List[Card]]:
+    """
+    ラウンドごとにデッキをリシャッフルして配札。
+    2デッキ（48カード）+ 切り札4枚 = 52枚
+    4人×5枚 = 20枚必要
+    """
+    deck: List[Card] = []
+    for _ in range(num_decks):
+        deck.extend([Card(s, r) for s in SUITS for r in range(1, max_rank + 1)])
+    # 切り札カード追加
+    trumps = [Card("Trump", 0) for _ in range(TRUMP_COUNT)]
+    deck.extend(trumps)
+    rng.shuffle(deck)
+
+    round_hands: Dict[str, List[Card]] = {}
+    for p in players:
+        hand = [deck.pop() for _ in range(CARDS_PER_SET)]
+        round_hands[p.name] = hand
+        # p.setsに保存（後方互換性のため）
+        if len(p.sets) <= round_no:
+            p.sets.extend([[] for _ in range(round_no - len(p.sets) + 1)])
+        p.sets[round_no] = hand
+
+    if logger:
+        logger.log("deal_round", {
+            "round": round_no + 1,
+            "hands": {name: [str(c) for c in cards] for name, cards in round_hands.items()},
+            "cards_per_player": CARDS_PER_SET,
+            "deck_size": num_decks * 24 + TRUMP_COUNT,
+        })
+
+    return round_hands
+
+
 # ======= Upgrades =======
 
 # 利用可能なアップグレードのリスト（設定画面で使用）
@@ -354,15 +399,23 @@ ALL_UPGRADES = [
     "UP_HUNT",
     "RECRUIT_INSTANT",
     "RECRUIT_WAGE_DISCOUNT",
+]
+
+# 魔女カード（ラウンド3のみ登場）
+ALL_WITCHES = [
     "WITCH_BLACKROAD",
     "WITCH_BLOODHUNT",
     "WITCH_HERD",
     "WITCH_RITUAL",
     "WITCH_BARRIER",
+    "WITCH_TREASURE",  # 新魔女: ゲーム終了時1金→1VP変換
 ]
 
-# デフォルトで有効なアップグレード
+# デフォルトで有効なアップグレード（魔女を除く）
 DEFAULT_ENABLED_UPGRADES = ALL_UPGRADES[:]
+
+# 魔女が登場するラウンド（0-indexed）
+WITCH_ROUND = 2  # ラウンド3 = index 2
 
 # 各アップグレードのプール内の枚数
 UPGRADE_POOL_COUNTS = {
@@ -370,11 +423,16 @@ UPGRADE_POOL_COUNTS = {
     "UP_HUNT": 6,
     "RECRUIT_INSTANT": 2,
     "RECRUIT_WAGE_DISCOUNT": 2,
+}
+
+# 魔女カードのプール内の枚数
+WITCH_POOL_COUNTS = {
     "WITCH_BLACKROAD": 1,
     "WITCH_BLOODHUNT": 1,
     "WITCH_HERD": 1,
     "WITCH_RITUAL": 1,
     "WITCH_BARRIER": 1,
+    "WITCH_TREASURE": 1,
 }
 
 
@@ -444,13 +502,14 @@ def upgrade_name(u: str) -> str:
     mapping = {
         "UP_TRADE": "交易拠点 改善（レベル+1）",
         "UP_HUNT": "魔物討伐 改善（レベル+1）",
-        "RECRUIT_INSTANT": "見習い魔女派遣（即座に+2人）",
+        "RECRUIT_INSTANT": "見習い魔女派遣（2金で+2人）",
         "RECRUIT_WAGE_DISCOUNT": "育成負担軽減の護符（雇用ターン給料軽減）",
         "WITCH_BLACKROAD": "《黒路の魔女》",
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
         "WITCH_HERD": "《群導の魔女》",
         "WITCH_RITUAL": "《大儀式の執行者》",
         "WITCH_BARRIER": "《結界織りの魔女》",
+        "WITCH_TREASURE": "《財宝変換の魔女》",
     }
     return mapping.get(u, u)
 
@@ -458,15 +517,16 @@ def upgrade_name(u: str) -> str:
 def upgrade_description(u: str) -> str:
     """Return detailed description for an upgrade card."""
     descriptions = {
-        "UP_TRADE": "交易アクションの収益が+1金貨増加します。最大レベル2まで強化可能。",
+        "UP_TRADE": "交易アクションの収益が+2金貨増加します。最大レベル2まで強化可能（基礎2→Lv1:4→Lv2:6）。",
         "UP_HUNT": "討伐アクションの獲得VPが+1増加します。最大レベル2まで強化可能。",
-        "RECRUIT_INSTANT": "即座に見習い2人が派遣されます。このターンから行動可能、給料も発生。",
+        "RECRUIT_INSTANT": "2金支払い、即座に見習い2人を獲得。以後給料支払い不要。",
         "RECRUIT_WAGE_DISCOUNT": "雇用したターンの給料支払いが軽減されます。",
         "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+1金",
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
         "WITCH_RITUAL": "【効果】各ラウンド1回、選んだ基本アクションをもう一度実行",
         "WITCH_BARRIER": "【効果】各ラウンド最初にHUNTを行った場合、追加で+1VP",
+        "WITCH_TREASURE": "【効果】ゲーム終了時、1金貨につき1VPに変換可能",
     }
     return descriptions.get(u, "説明なし")
 
@@ -503,6 +563,12 @@ WITCH_FLAVOR = {
 
 結界は村を守る。
 同時に、外へ出ることも難しくする。""",
+
+    "WITCH_TREASURE": """《財宝変換の魔女》
+役割：終盤・金貨活用
+
+彼女の魔法は、金貨の価値を高める。
+だが、その代償を知る者は少ない。""",
 }
 
 
@@ -520,8 +586,10 @@ def apply_upgrade(player: Player, u: str) -> None:
     elif u == "UP_HUNT":
         player.hunt_level = min(2, player.hunt_level + 1)
     elif u == "RECRUIT_INSTANT":
-        # 即座にワーカー+2（このターンから使用可能、給料も発生）
+        # 2金支払い、即座にワーカー+2（以後給料なし）
+        player.gold -= UPGRADE_WORKER_COST
         player.basic_workers_total += 2
+        player.upgraded_workers += 2
     elif u == "RECRUIT_WAGE_DISCOUNT":
         player.recruit_upgrade = u
     elif u.startswith("WITCH_"):
@@ -529,11 +597,12 @@ def apply_upgrade(player: Player, u: str) -> None:
 
 
 def calc_expected_wage(player: Player, round_no: int) -> int:
-    """次のラウンドで発生する給料を計算"""
-    workers = player.basic_workers_total + player.basic_workers_new_hires
-    init_count = min(INITIAL_WORKERS, workers)
-    hired_count = workers - init_count
-    return (init_count * WAGE_CURVE[round_no]) + (hired_count * UPGRADED_WAGE_CURVE[round_no])
+    """次のラウンドで発生する給料を計算（初期ワーカーのみ給料発生）"""
+    # 初期ワーカー = 総ワーカー - アップグレードワーカー
+    total_workers = player.basic_workers_total + player.basic_workers_new_hires
+    initial_workers = total_workers - player.upgraded_workers
+    initial_workers = max(0, min(INITIAL_WORKERS, initial_workers))
+    return initial_workers * WAGE_CURVE[round_no]
 
 
 def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 0) -> str:
@@ -803,10 +872,10 @@ def choose_card(player: Player, lead_card: Optional[Card], hand: List[Card]) -> 
 def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, logger: Optional[JsonlLogger]) -> int:
     """
     Flow:
-      - Prepare 6-card round hand (set_index)
+      - Use round hand from player.sets[round_no]
       - Declaration after seeing round hand
-      - Seal 2 cards (unplayable), leaving 4
-      - Play 4 tricks with normal must-follow (NO TRUMP)
+      - Seal (CARDS_PER_SET - TRICKS_PER_ROUND) cards
+      - Play TRICKS_PER_ROUND tricks with must-follow
       - Declaration bonus
     Returns leader_index used for tie-break ordering.
     """
@@ -835,7 +904,8 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
 
     print("宣言一覧:", ", ".join(f"{p.name}:{p.declared_tricks}" for p in players))
 
-    print("\n--- 封印フェーズ (2枚を封印) ---")
+    need_seal = CARDS_PER_SET - TRICKS_PER_ROUND
+    print(f"\n--- 封印フェーズ ({need_seal}枚を封印) ---")
     sealed_by_player: Dict[str, List[Card]] = {}
     playable_hands: Dict[str, List[Card]] = {}
     for p in players:
@@ -865,7 +935,7 @@ def run_trick_taking(players: List[Player], round_no: int, rng: random.Random, l
     for p in players:
         print(f"  {p.name}: {', '.join(str(c) for c in sealed_by_player[p.name])}")
 
-    print(f"\n--- トリックテイキング ラウンド{round_no+1}: セット#{set_index+1}使用 (6枚→封印2枚→4トリック) ---")
+    print(f"\n--- トリックテイキング ラウンド{round_no+1} ({CARDS_PER_SET}枚→封印{need_seal}枚→{TRICKS_PER_ROUND}トリック) ---")
     print(f"このラウンドのリーダー: {players[leader_index].name}")
 
     leader = leader_index
@@ -1027,9 +1097,8 @@ def pay_wages_and_debt(
 ) -> Dict[str, Any]:
     """
     Rule:
-    - New hires do NOT act this round
-    - BUT their wage IS paid starting this round
-    - Initial workers use WAGE_CURVE, hired workers use UPGRADED_WAGE_CURVE
+    - 初期ワーカー（INITIAL_WORKERS）のみWAGE_CURVEに従って給料支払い
+    - アップグレードワーカーは取得時2金支払い済み、以後給料なし
 
     Args:
         debt_multiplier: Override for debt penalty multiplier (None = use global)
@@ -1040,22 +1109,19 @@ def pay_wages_and_debt(
 
     workers_active = player.basic_workers_total
     workers_hired_this_round = player.basic_workers_new_hires
-    workers_paid = workers_active + workers_hired_this_round  # include hires in wage
 
-    # Calculate wages: initial workers vs upgraded (hired) workers
+    # 給料計算: 初期ワーカーのみ（アップグレードワーカーは給料なし）
     initial_wage_rate = WAGE_CURVE[round_no]
-    upgraded_wage_rate = UPGRADED_WAGE_CURVE[round_no]
-
     initial_workers_base = initial_workers_config if initial_workers_config is not None else INITIAL_WORKERS
-    initial_workers_count = min(initial_workers_base, workers_paid)
-    upgraded_workers_count = workers_paid - initial_workers_count
+    # 初期ワーカー数 = 基本数（2）まで、ただしアップグレードワーカーを除外
+    initial_workers_count = min(initial_workers_base, workers_active - player.upgraded_workers)
+    initial_workers_count = max(0, initial_workers_count)
 
-    wage_gross = (initial_workers_count * initial_wage_rate) + (upgraded_workers_count * upgraded_wage_rate)
+    wage_gross = initial_workers_count * initial_wage_rate
 
     discount = 0
     witch_wage_bonus = ""
     if player.recruit_upgrade == "RECRUIT_WAGE_DISCOUNT":
-        # interpret: reduce wage by 1 per hired worker this round
         discount = workers_hired_this_round
 
     # WITCH_HERD: 見習いを雇用したラウンド、給料合計-1
@@ -1081,12 +1147,10 @@ def pay_wages_and_debt(
 
     return {
         "initial_wage_rate": initial_wage_rate,
-        "upgraded_wage_rate": upgraded_wage_rate,
         "initial_workers": initial_workers_count,
-        "upgraded_workers": upgraded_workers_count,
+        "upgraded_workers": player.upgraded_workers,
         "workers_active": workers_active,
         "workers_hired_this_round": workers_hired_this_round,
-        "workers_paid_total": workers_paid,
         "wage_gross": wage_gross,
         "wage_discount": discount,
         "wage_net": wage_net,
@@ -1134,7 +1198,7 @@ def main():
             "REVEAL_UPGRADES": REVEAL_UPGRADES,
             "START_GOLD": START_GOLD,
             "WAGE_CURVE": WAGE_CURVE,
-            "UPGRADED_WAGE_CURVE": UPGRADED_WAGE_CURVE,
+            "UPGRADE_WORKER_COST": UPGRADE_WORKER_COST,
             "DEBT_PENALTY_MULTIPLIER": DEBT_PENALTY_MULTIPLIER,
             "DEBT_PENALTY_CAP": DEBT_PENALTY_CAP,
             "RESCUE_GOLD_FOR_4TH": RESCUE_GOLD_FOR_4TH,
@@ -1146,23 +1210,45 @@ def main():
         "players": snapshot_players(players),
     })
 
-    deal_fixed_sets(players, seed=deal_seed, logger=logger)
+    # プレイヤーのsetsを空リストで初期化
+    for p in players:
+        p.sets = []
 
     # アップグレードデッキを初期化
     upgrade_deck = UpgradeDeck(rng)
 
+    # 魔女デッキを作成（ラウンド3用）
+    witch_pool: List[str] = []
+    for w in ALL_WITCHES:
+        count = WITCH_POOL_COUNTS.get(w, 1)
+        witch_pool.extend([w] * count)
+    rng.shuffle(witch_pool)
+
     for round_no in range(ROUNDS):
         print_state(players, round_no)
 
-        revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
-        print("\n公開されたアップグレード:")
+        # ラウンド毎にデッキをリシャッフルして配札
+        round_hands = deal_round_cards(players, round_no, rng, logger)
+        print(f"\n--- ラウンド{round_no + 1} カード配布 (リシャッフル) ---")
+
+        # ラウンド3（WITCH_ROUND）は魔女カード、それ以外は通常アップグレード
+        is_witch_round = (round_no == WITCH_ROUND)
+        if is_witch_round:
+            # 魔女ラウンド: 魔女カードを公開
+            revealed = witch_pool[:REVEAL_UPGRADES]
+            witch_pool = witch_pool[REVEAL_UPGRADES:]
+            print("\n★ 魔女ラウンド！ 公開された魔女カード:")
+        else:
+            revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
+            print("\n公開されたアップグレード:")
         for u in revealed:
             print(" -", upgrade_name(u), f"[{u}]")
         logger.log("reveal_upgrades", {
             "round": round_no + 1,
+            "is_witch_round": is_witch_round,
             "revealed": revealed[:],
-            "deck_remaining": len(upgrade_deck.deck),
-            "discard_pile": len(upgrade_deck.discard),
+            "deck_remaining": len(upgrade_deck.deck) if not is_witch_round else 0,
+            "discard_pile": len(upgrade_deck.discard) if not is_witch_round else 0,
         })
 
         leader_index = run_trick_taking(players, round_no, rng, logger)
@@ -1210,8 +1296,8 @@ def main():
                     "after": snapshot_players([p])[0],
                 })
 
-        # 選ばれなかったカードを捨て札に移動
-        if revealed:
+        # 選ばれなかったカードを捨て札に移動（魔女カードは捨てない）
+        if revealed and not is_witch_round:
             upgrade_deck.discard_remaining(revealed)
             logger.log("upgrade_discard", {
                 "round": round_no + 1,
@@ -1247,10 +1333,9 @@ def main():
             })
 
         initial_rate = WAGE_CURVE[round_no]
-        upgraded_rate = UPGRADED_WAGE_CURVE[round_no]
         cap_info = f"上限{DEBT_PENALTY_CAP}" if DEBT_PENALTY_CAP else "無制限"
-        print(f"\n--- 給料支払い (初期={initial_rate}, 雇用={upgraded_rate}) と負債 (-{DEBT_PENALTY_MULTIPLIER}VP/金, {cap_info}) ---")
-        logger.log("wage_phase_start", {"round": round_no + 1, "initial_wage_rate": initial_rate, "upgraded_wage_rate": upgraded_rate, "players": snapshot_players(players)})
+        print(f"\n--- 給料支払い (初期ワーカー={initial_rate}金/人) と負債 (-{DEBT_PENALTY_MULTIPLIER}VP/金, {cap_info}) ---")
+        logger.log("wage_phase_start", {"round": round_no + 1, "initial_wage_rate": initial_rate, "players": snapshot_players(players)})
 
         for p in players:
             res = pay_wages_and_debt(p, round_no)
@@ -1282,10 +1367,17 @@ def main():
     # ゲーム終了時: 金貨をVPに変換
     print("\n--- 金貨→VP変換 ---")
     for p in players:
-        bonus_vp = p.gold // GOLD_TO_VP_RATE
-        if bonus_vp > 0:
-            print(f"{p.name}: {p.gold}G → +{bonus_vp}VP")
-            p.vp += bonus_vp
+        # WITCH_TREASUREがあれば1:1、なければ2:1
+        if "WITCH_TREASURE" in p.witches:
+            bonus_vp = p.gold  # 1金 = 1VP
+            if bonus_vp > 0:
+                print(f"{p.name}: {p.gold}G → +{bonus_vp}VP (《財宝変換の魔女》: 1:1変換)")
+                p.vp += bonus_vp
+        else:
+            bonus_vp = p.gold // GOLD_TO_VP_RATE
+            if bonus_vp > 0:
+                print(f"{p.name}: {p.gold}G → +{bonus_vp}VP")
+                p.vp += bonus_vp
 
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
     logger.log("game_end", {
@@ -1628,8 +1720,7 @@ class GameEngine:
         # Phase: wage_payment
         if self.phase == "wage_payment":
             initial_rate = WAGE_CURVE[self.round_no]
-            upgraded_rate = UPGRADED_WAGE_CURVE[self.round_no]
-            self._log(f"--- 給料支払い (初期={initial_rate}, 雇用={upgraded_rate}) ---")
+            self._log(f"--- 給料支払い (初期ワーカー={initial_rate}金/人) ---")
 
             for p in self.players:
                 res = pay_wages_and_debt(
@@ -1734,10 +1825,17 @@ class GameEngine:
         gold_to_vp_rate = self.config.gold_to_vp_rate
         self._log("--- 金貨→VP変換 ---")
         for p in self.players:
-            bonus_vp = p.gold // gold_to_vp_rate if gold_to_vp_rate > 0 else 0
-            if bonus_vp > 0:
-                self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP")
-                p.vp += bonus_vp
+            # WITCH_TREASUREがあれば1:1変換
+            if "WITCH_TREASURE" in p.witches:
+                bonus_vp = p.gold  # 1金 = 1VP
+                if bonus_vp > 0:
+                    self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP (《財宝変換の魔女》)")
+                    p.vp += bonus_vp
+            else:
+                bonus_vp = p.gold // gold_to_vp_rate if gold_to_vp_rate > 0 else 0
+                if bonus_vp > 0:
+                    self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP")
+                    p.vp += bonus_vp
 
         self.phase = "game_end"
         players_sorted = sorted(self.players, key=lambda p: (p.vp, p.gold), reverse=True)
@@ -1752,7 +1850,7 @@ class GameEngine:
 def run_single_game_quiet(
     seed: int,
     max_rank: int = 6,
-    num_decks: int = 4,
+    num_decks: int = NUM_DECKS,
 ) -> Dict[str, Any]:
     """Run a single game with all bots, no output. Returns final scores."""
     rng = random.Random(seed)
@@ -1766,14 +1864,32 @@ def run_single_game_quiet(
         Player("P4", is_bot=True, rng=random.Random(seed + 4), strategy=assign_random_strategy(bot_rng)),
     ]
 
-    deal_fixed_sets(players, seed=seed, logger=None, max_rank=max_rank,
-                    num_decks=num_decks)
+    # プレイヤーのsetsを空リストで初期化
+    for p in players:
+        p.sets = []
 
     # アップグレードデッキを初期化
     upgrade_deck = UpgradeDeck(rng)
 
+    # 魔女デッキを作成（ラウンド3用）
+    witch_pool: List[str] = []
+    for w in ALL_WITCHES:
+        count = WITCH_POOL_COUNTS.get(w, 1)
+        witch_pool.extend([w] * count)
+    rng.shuffle(witch_pool)
+
     for round_no in range(ROUNDS):
-        revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
+        # ラウンド毎にデッキをリシャッフルして配札
+        deal_round_cards(players, round_no, rng, None, max_rank, num_decks)
+
+        # ラウンド3は魔女、それ以外は通常アップグレード
+        is_witch_round = (round_no == WITCH_ROUND)
+        if is_witch_round:
+            revealed = witch_pool[:REVEAL_UPGRADES]
+            witch_pool = witch_pool[REVEAL_UPGRADES:]
+        else:
+            revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
+
         set_index = round_no % SETS_PER_GAME
         leader_index = round_no % len(players)
 
@@ -1826,8 +1942,8 @@ def run_single_game_quiet(
                 revealed.remove(choice)
                 apply_upgrade(p, choice)
 
-        # 選ばれなかったカードを捨て札に移動
-        if revealed:
+        # 選ばれなかったカードを捨て札に移動（魔女ラウンドは捨てない）
+        if revealed and not is_witch_round:
             upgrade_deck.discard_remaining(revealed)
 
         fourth = ranked[-1]
@@ -1850,7 +1966,11 @@ def run_single_game_quiet(
 
     # Gold to VP conversion at end
     for p in players:
-        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        # WITCH_TREASUREがあれば1:1変換
+        if "WITCH_TREASURE" in p.witches:
+            bonus_vp = p.gold
+        else:
+            bonus_vp = p.gold // GOLD_TO_VP_RATE
         p.vp += bonus_vp
 
     # Return results
@@ -1995,12 +2115,12 @@ def choose_actions_smart_bot(
     # 現在のゴールド
     current_gold = player.gold
 
-    # 今ラウンドの給料を予測（新規雇用なしと仮定）
+    # 今ラウンドの給料を予測（初期ワーカーのみ給料発生）
     initial_wage_rate = WAGE_CURVE[round_no]
-    upgraded_wage_rate = UPGRADED_WAGE_CURVE[round_no]
-    initial_workers_count = min(INITIAL_WORKERS, n)
-    upgraded_workers_count = n - initial_workers_count
-    expected_wage = (initial_workers_count * initial_wage_rate) + (upgraded_workers_count * upgraded_wage_rate)
+    # 初期ワーカー数（アップグレードワーカーを除く）
+    initial_workers_count = min(INITIAL_WORKERS, n - player.upgraded_workers)
+    initial_workers_count = max(0, initial_workers_count)
+    expected_wage = initial_workers_count * initial_wage_rate
 
     # TRADEで稼げる額
     trade_yield = player.trade_yield()
@@ -2086,10 +2206,19 @@ def run_single_game_with_debt_config(
         Player("P4", is_bot=True, rng=random.Random(seed + 4), strategy=assign_random_strategy(bot_rng)),
     ]
 
-    deal_fixed_sets(players, seed=seed, logger=None, max_rank=6, num_decks=4)
+    # プレイヤーのsetsを空リストで初期化
+    for p in players:
+        p.sets = []
 
     # アップグレードデッキを初期化
     upgrade_deck = UpgradeDeck(rng)
+
+    # 魔女デッキを作成（ラウンド3用）
+    witch_pool: List[str] = []
+    for w in ALL_WITCHES:
+        count = WITCH_POOL_COUNTS.get(w, 1)
+        witch_pool.extend([w] * count)
+    rng.shuffle(witch_pool)
 
     # Track debt occurrences
     total_debt_events = 0
@@ -2097,7 +2226,17 @@ def run_single_game_with_debt_config(
     total_debt_penalty = 0
 
     for round_no in range(ROUNDS):
-        revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
+        # ラウンド毎にデッキをリシャッフルして配札
+        deal_round_cards(players, round_no, rng, None)
+
+        # ラウンド3は魔女、それ以外は通常アップグレード
+        is_witch_round = (round_no == WITCH_ROUND)
+        if is_witch_round:
+            revealed = witch_pool[:REVEAL_UPGRADES]
+            witch_pool = witch_pool[REVEAL_UPGRADES:]
+        else:
+            revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
+
         set_index = round_no % SETS_PER_GAME
         leader_index = round_no % len(players)
 
@@ -2150,8 +2289,8 @@ def run_single_game_with_debt_config(
                 revealed.remove(choice)
                 apply_upgrade(p, choice)
 
-        # 選ばれなかったカードを捨て札に移動
-        if revealed:
+        # 選ばれなかったカードを捨て札に移動（魔女ラウンドは捨てない）
+        if revealed and not is_witch_round:
             upgrade_deck.discard_remaining(revealed)
 
         fourth = ranked[-1]
@@ -2167,18 +2306,17 @@ def run_single_game_with_debt_config(
             resolve_actions(p, actions)
 
         # Wage payment with configurable debt penalty
+        # 初期ワーカーのみ給料発生（アップグレードワーカーは給料なし）
         for p in players:
             workers_active = p.basic_workers_total
             workers_hired_this_round = p.basic_workers_new_hires
-            workers_paid = workers_active + workers_hired_this_round
 
             initial_wage_rate = WAGE_CURVE[round_no]
-            upgraded_wage_rate = UPGRADED_WAGE_CURVE[round_no]
+            # 初期ワーカー数（アップグレードワーカーを除く）
+            initial_workers_count = min(INITIAL_WORKERS, workers_active - p.upgraded_workers)
+            initial_workers_count = max(0, initial_workers_count)
 
-            initial_workers_count = min(INITIAL_WORKERS, workers_paid)
-            upgraded_workers_count = workers_paid - initial_workers_count
-
-            wage_gross = (initial_workers_count * initial_wage_rate) + (upgraded_workers_count * upgraded_wage_rate)
+            wage_gross = initial_workers_count * initial_wage_rate
 
             discount = 0
             if p.recruit_upgrade == "RECRUIT_WAGE_DISCOUNT":
@@ -2210,7 +2348,11 @@ def run_single_game_with_debt_config(
 
     # Gold to VP conversion at end
     for p in players:
-        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        # WITCH_TREASUREがあれば1:1変換
+        if "WITCH_TREASURE" in p.witches:
+            bonus_vp = p.gold
+        else:
+            bonus_vp = p.gold // GOLD_TO_VP_RATE
         p.vp += bonus_vp
 
     # Return results
