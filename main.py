@@ -68,6 +68,8 @@ GRACE_HAND_SWAP_COST = 1
 # 恩寵獲得: 儀式アクション（金貨 → 恩寵）
 GRACE_RITUAL_GOLD_COST = 3
 GRACE_RITUAL_GAIN = 2
+# 恩寵獲得: 祈りアクション（無条件で恩寵）
+GRACE_PRAY_GAIN = 2
 # 恩寵獲得: 宣言0成功
 GRACE_DECLARATION_ZERO_BONUS = 1
 # 恩寵獲得: トリテ0勝
@@ -75,7 +77,7 @@ GRACE_ZERO_TRICKS_BONUS = 1
 # 4位ボーナス: 恩寵選択時の獲得量
 GRACE_4TH_PLACE_BONUS = 1
 
-ACTIONS = ["TRADE", "HUNT", "RECRUIT"]
+ACTIONS = ["TRADE", "HUNT", "RECRUIT", "PRAY"]
 
 # === CPU性格定義 ===
 # grace_awareness: 恩寵獲得の意識（0=無関心, 0.5=適度, 1=積極的）
@@ -1331,22 +1333,32 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                     break
 
         for _ in range(n):
-            # 恩寵特化: 儀式を積極的に選択
-            if (GRACE_TEST_MODE and player.has_ritual and
-                strat.get('prefer_grace', False) and
-                current_gold >= GRACE_RITUAL_GOLD_COST + max(0, expected_wage - 2)):
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
-                continue
+            # 恩寵特化: 祈りまたは儀式を積極的に選択
+            if GRACE_TEST_MODE and strat.get('prefer_grace', False):
+                # 儀式の祭壇があり金貨に余裕があれば儀式優先
+                if (player.has_ritual and
+                    current_gold >= GRACE_RITUAL_GOLD_COST + max(0, expected_wage - 2)):
+                    actions.append("RITUAL")
+                    current_gold -= GRACE_RITUAL_GOLD_COST
+                    continue
+                # それ以外は祈りを選択（80%確率）
+                if player.rng.random() < 0.8:
+                    actions.append("PRAY")
+                    continue
 
-            # 全性格共通: 閾値に近い場合、grace_awarenessに応じて儀式を選択
-            if (GRACE_TEST_MODE and player.has_ritual and
-                grace_near_threshold and
-                current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
-                player.rng.random() < grace_awareness * 0.6):  # grace_awareness×60%で儀式
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
-                continue
+            # 全性格共通: 閾値に近い場合、grace_awarenessに応じて祈りまたは儀式を選択
+            if GRACE_TEST_MODE and grace_near_threshold:
+                # 儀式の祭壇があり金貨に余裕があれば儀式
+                if (player.has_ritual and
+                    current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
+                    player.rng.random() < grace_awareness * 0.6):
+                    actions.append("RITUAL")
+                    current_gold -= GRACE_RITUAL_GOLD_COST
+                    continue
+                # それ以外は祈りを選択（grace_awareness×50%確率）
+                if player.rng.random() < grace_awareness * 0.5:
+                    actions.append("PRAY")
+                    continue
 
             # ボットの儀式選択: 金貨に余裕があり、儀式が可能な場合、一定確率で選択
             if (GRACE_TEST_MODE and player.has_ritual and
@@ -1354,6 +1366,11 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                 player.rng.random() < grace_awareness * 0.3):  # grace_awareness×30%で儀式
                 actions.append("RITUAL")
                 current_gold -= GRACE_RITUAL_GOLD_COST
+                continue
+
+            # ボットの祈り選択: 一定確率で祈りを選択
+            if GRACE_TEST_MODE and player.rng.random() < grace_awareness * 0.2:
+                actions.append("PRAY")
                 continue
 
             if player.strategy == 'CONSERVATIVE':
@@ -1390,8 +1407,10 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
         return actions
 
     print(f"\n{player.name} {n}人の見習いにアクションを割り当てます。")
-    if GRACE_TEST_MODE and player.has_ritual:
-        print(f"  (儀式の祭壇あり: RITUAL選択可能 - {GRACE_RITUAL_GOLD_COST}金→{GRACE_RITUAL_GAIN}恩寵)")
+    if GRACE_TEST_MODE:
+        print(f"  (祈りアクション可能: PRAY → +{GRACE_PRAY_GAIN}恩寵)")
+        if player.has_ritual:
+            print(f"  (儀式の祭壇あり: RITUAL選択可能 - {GRACE_RITUAL_GOLD_COST}金→{GRACE_RITUAL_GAIN}恩寵)")
     for i in range(n):
         a = prompt_choice(f" ワーカー{i+1}のアクション", available_actions, default="TRADE")
         actions.append(a)
@@ -1432,6 +1451,11 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
                     player.gold -= GRACE_RITUAL_GOLD_COST
                     player.grace_points += GRACE_RITUAL_GAIN
                     grace_bonuses.append(f"儀式: -{GRACE_RITUAL_GOLD_COST}金 → +{GRACE_RITUAL_GAIN}恩寵")
+        elif a == "PRAY":
+            # 祈りアクション: 無条件で恩寵獲得
+            if GRACE_TEST_MODE:
+                player.grace_points += GRACE_PRAY_GAIN
+                grace_bonuses.append(f"祈り: +{GRACE_PRAY_GAIN}恩寵")
         else:
             raise ValueError(f"Unknown action: {a}")
 
@@ -2404,13 +2428,26 @@ def run_single_game_quiet(
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
     vps = [p.vp for p in players_sorted]
     grace_points = [p.grace_points for p in players_sorted]
+
+    # 各プレイヤーの詳細情報（恩寵帯別勝率分析用）
+    player_details = []
+    winner_name = players_sorted[0].name
+    for p in players:
+        player_details.append({
+            "name": p.name,
+            "vp": p.vp,
+            "grace_points": p.grace_points,
+            "is_winner": p.name == winner_name,
+        })
+
     return {
-        "winner": players_sorted[0].name,
+        "winner": winner_name,
         "vps": vps,
         "vp_diff_1st_2nd": vps[0] - vps[1],
         "vp_diff_1st_last": vps[0] - vps[-1],
         "grace_points": grace_points,
         "grace_stats": grace_stats,
+        "player_details": player_details,
     }
 
 
@@ -2903,11 +2940,41 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
     all_threshold_reached = []
     all_bonus_vp = []
 
+    # 恩寵帯別勝率分析用
+    grace_band_wins = {"0-4": 0, "5-7": 0, "8-9": 0, "10-12": 0, "13+": 0}
+    grace_band_total = {"0-4": 0, "5-7": 0, "8-9": 0, "10-12": 0, "13+": 0}
+    winner_grace_points = []
+    loser_grace_points = []
+
     for r in results:
         all_grace_points.extend(r.get("grace_points", [0, 0, 0, 0]))
         stats = r.get("grace_stats", {})
         all_threshold_reached.extend(stats.get("threshold_reached", [0, 0, 0, 0]))
         all_bonus_vp.extend(stats.get("bonus_vp", [0, 0, 0, 0]))
+
+        # 恩寵帯別勝率を集計
+        for pd in r.get("player_details", []):
+            gp = pd["grace_points"]
+            is_winner = pd["is_winner"]
+
+            # 恩寵帯を判定
+            if gp >= 13:
+                band = "13+"
+            elif gp >= 10:
+                band = "10-12"
+            elif gp >= 8:
+                band = "8-9"
+            elif gp >= 5:
+                band = "5-7"
+            else:
+                band = "0-4"
+
+            grace_band_total[band] += 1
+            if is_winner:
+                grace_band_wins[band] += 1
+                winner_grace_points.append(gp)
+            else:
+                loser_grace_points.append(gp)
 
     # Calculate VP diff statistics
     vp_diffs = [r["vp_diff_1st_2nd"] for r in results]
@@ -2929,6 +2996,18 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
     avg_bonus_vp = sum(all_bonus_vp) / len(all_bonus_vp) if all_bonus_vp else 0
     players_with_bonus = sum(1 for b in all_bonus_vp if b > 0)
 
+    # 恩寵帯別勝率を計算
+    grace_band_win_rate = {}
+    for band in grace_band_wins:
+        if grace_band_total[band] > 0:
+            grace_band_win_rate[band] = grace_band_wins[band] / grace_band_total[band]
+        else:
+            grace_band_win_rate[band] = 0
+
+    # 勝者/敗者の平均恩寵
+    avg_winner_grace = sum(winner_grace_points) / len(winner_grace_points) if winner_grace_points else 0
+    avg_loser_grace = sum(loser_grace_points) / len(loser_grace_points) if loser_grace_points else 0
+
     return {
         "num_games": num_games,
         "avg_vp_diff": avg_vp_diff,
@@ -2941,19 +3020,36 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
         "threshold_13_rate": threshold_13_count / total_players if total_players > 0 else 0,
         "avg_bonus_vp": avg_bonus_vp,
         "bonus_rate": players_with_bonus / total_players if total_players > 0 else 0,
+        # 恩寵帯別勝率
+        "grace_band_win_rate": grace_band_win_rate,
+        "grace_band_total": grace_band_total,
+        "avg_winner_grace": avg_winner_grace,
+        "avg_loser_grace": avg_loser_grace,
     }
 
 
 def run_all_grace_simulations():
     """Run grace point system analysis simulation."""
     print("=== 恩寵ポイントシステム分析シミュレーション ===")
-    print(f"100ゲーム実行中...\n")
+    print(f"1000ゲーム実行中...\n")
 
-    result = run_grace_simulation(num_games=100)
+    result = run_grace_simulation(num_games=1000)
 
     print("=" * 60)
     print("=== シミュレーション結果 ===")
     print("=" * 60)
+
+    print(f"\n【勝者/敗者の恩寵統計】")
+    print(f"  勝者平均恩寵: {result['avg_winner_grace']:.1f}点")
+    print(f"  敗者平均恩寵: {result['avg_loser_grace']:.1f}点")
+
+    print(f"\n【恩寵帯別勝率】")
+    print(f"  {'恩寵帯':<10} {'勝率':<10} {'人数':<10}")
+    print(f"  {'-'*30}")
+    for band in ["0-4", "5-7", "8-9", "10-12", "13+"]:
+        win_rate = result['grace_band_win_rate'][band] * 100
+        total = result['grace_band_total'][band]
+        print(f"  {band:<10} {win_rate:<10.1f}% {total:<10}")
 
     print(f"\n【VP差統計】")
     print(f"  1-2位平均VP差: {result['avg_vp_diff']:.2f}")
@@ -2977,17 +3073,27 @@ def run_all_grace_simulations():
 
     # バランス評価
     print("\n【バランス評価】")
+
+    # 恩寵帯別勝率の評価
+    win_rate_13 = result['grace_band_win_rate'].get("13+", 0)
+    if win_rate_13 < 0.20:
+        print(f"  13点到達者の勝率: {win_rate_13*100:.1f}% (期待値25%を下回る)")
+    elif win_rate_13 > 0.35:
+        print(f"  13点到達者の勝率: {win_rate_13*100:.1f}% (強すぎる可能性)")
+    else:
+        print(f"  13点到達者の勝率: {win_rate_13*100:.1f}% (適正)")
+
     if result['avg_grace_points'] < 3:
-        print("  ⚠️ 恩寵獲得量が少なすぎます（平均3点未満）")
+        print("  恩寵獲得量が少なすぎます（平均3点未満）")
         print("     → 獲得手段を増やすか、獲得量を上げることを検討")
     elif result['avg_grace_points'] > 10:
-        print("  ⚠️ 恩寵獲得量が多すぎます（平均10点超）")
+        print("  恩寵獲得量が多すぎます（平均10点超）")
         print("     → 獲得量を調整することを検討")
     else:
-        print("  ✓ 恩寵獲得量は適正範囲内です")
+        print(f"  恩寵獲得量は適正範囲内です (平均{result['avg_grace_points']:.1f}点)")
 
     if result['threshold_5_rate'] < 0.3:
-        print("  ⚠️ 閾値到達率が低すぎます（5点到達率30%未満）")
+        print("  閾値到達率が低すぎます（5点到達率30%未満）")
         print("     → 閾値を下げるか、獲得量を増やすことを検討")
     elif result['threshold_5_rate'] > 0.8:
         print("  ⚠️ 閾値到達が容易すぎます（5点到達率80%超）")
