@@ -595,7 +595,7 @@ def parse_card(s: str) -> Card:
 def card_display(card: Card) -> str:
     """Return formatted display string for a card with emoji."""
     if card.is_trump():
-        return f"🌟{card.rank}"
+        return "🌟切り札"  # ランクなし
     suit_emoji = {"Spade": "♠", "Heart": "♥", "Diamond": "♦", "Club": "♣"}
     return f"{suit_emoji[card.suit]}{card.rank}"
 
@@ -776,7 +776,7 @@ if pending is not None:
         lead = context["lead_card"]
         if lead:
             if lead.is_trump():
-                st.info(f"🌟 リード: 切り札{lead.rank}")
+                st.info("🌟 リード: 切り札")
             else:
                 suit_emoji = {"Spade": "♠", "Heart": "♥", "Diamond": "♦", "Club": "♣"}
                 st.info(f"{suit_emoji.get(lead.suit, '')} リード: {lead.suit}（マストフォロー）")
