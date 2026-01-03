@@ -59,9 +59,9 @@ DEBT_PENALTY_CAP: Optional[int] = None
 GRACE_TEST_MODE = True  # テストモードON/OFF
 # 閾値ボーナス（累計ではなく、到達した最高の閾値のみ適用）
 GRACE_THRESHOLD_BONUS = [
-    (13, 8),   # 13点以上 → +8VP
-    (10, 5),   # 10点以上 → +5VP
-    (5, 2),    # 5点以上 → +2VP
+    (13, 15),  # 13点以上 → +15VP
+    (10, 10),  # 10点以上 → +10VP
+    (8, 6),    # 8点以上 → +6VP
 ]
 # 恩寵消費効果: シール前に手札1枚をデッキトップと交換
 GRACE_HAND_SWAP_COST = 1
@@ -2903,11 +2903,51 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
     all_threshold_reached = []
     all_bonus_vp = []
 
+    # 恩寵帯別統計
+    grace_band_stats = {
+        "0-4": {"wins": 0, "total": 0, "vp_sum": 0},
+        "5-7": {"wins": 0, "total": 0, "vp_sum": 0},
+        "8-9": {"wins": 0, "total": 0, "vp_sum": 0},
+        "10-12": {"wins": 0, "total": 0, "vp_sum": 0},
+        "13+": {"wins": 0, "total": 0, "vp_sum": 0},
+    }
+
+    # 勝者・敗者別恩寵統計
+    winner_grace_points = []
+    loser_grace_points = []
+
     for r in results:
-        all_grace_points.extend(r.get("grace_points", [0, 0, 0, 0]))
+        grace_pts = r.get("grace_points", [0, 0, 0, 0])
+        final_vps = r.get("final_vps", [0, 0, 0, 0])
+        all_grace_points.extend(grace_pts)
         stats = r.get("grace_stats", {})
         all_threshold_reached.extend(stats.get("threshold_reached", [0, 0, 0, 0]))
         all_bonus_vp.extend(stats.get("bonus_vp", [0, 0, 0, 0]))
+
+        # 勝者を特定
+        max_vp = max(final_vps)
+        winner_idx = final_vps.index(max_vp)
+
+        for i, (gp, vp) in enumerate(zip(grace_pts, final_vps)):
+            # 恩寵帯を特定
+            if gp >= 13:
+                band = "13+"
+            elif gp >= 10:
+                band = "10-12"
+            elif gp >= 8:
+                band = "8-9"
+            elif gp >= 5:
+                band = "5-7"
+            else:
+                band = "0-4"
+
+            grace_band_stats[band]["total"] += 1
+            grace_band_stats[band]["vp_sum"] += vp
+            if i == winner_idx:
+                grace_band_stats[band]["wins"] += 1
+                winner_grace_points.append(gp)
+            else:
+                loser_grace_points.append(gp)
 
     # Calculate VP diff statistics
     vp_diffs = [r["vp_diff_1st_2nd"] for r in results]
@@ -2919,8 +2959,12 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
     max_grace = max(all_grace_points) if all_grace_points else 0
     min_grace = min(all_grace_points) if all_grace_points else 0
 
+    # 勝者・敗者平均恩寵
+    avg_winner_grace = sum(winner_grace_points) / len(winner_grace_points) if winner_grace_points else 0
+    avg_loser_grace = sum(loser_grace_points) / len(loser_grace_points) if loser_grace_points else 0
+
     # Threshold rates
-    threshold_5_count = sum(1 for t in all_threshold_reached if t >= 5)
+    threshold_8_count = sum(1 for t in all_threshold_reached if t >= 8)
     threshold_10_count = sum(1 for t in all_threshold_reached if t >= 10)
     threshold_13_count = sum(1 for t in all_threshold_reached if t >= 13)
     total_players = len(all_threshold_reached)
@@ -2936,36 +2980,48 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
         "avg_grace_points": avg_grace,
         "max_grace_points": max_grace,
         "min_grace_points": min_grace,
-        "threshold_5_rate": threshold_5_count / total_players if total_players > 0 else 0,
+        "threshold_8_rate": threshold_8_count / total_players if total_players > 0 else 0,
         "threshold_10_rate": threshold_10_count / total_players if total_players > 0 else 0,
         "threshold_13_rate": threshold_13_count / total_players if total_players > 0 else 0,
         "avg_bonus_vp": avg_bonus_vp,
         "bonus_rate": players_with_bonus / total_players if total_players > 0 else 0,
+        "grace_band_stats": grace_band_stats,
+        "avg_winner_grace": avg_winner_grace,
+        "avg_loser_grace": avg_loser_grace,
     }
 
 
 def run_all_grace_simulations():
     """Run grace point system analysis simulation."""
     print("=== 恩寵ポイントシステム分析シミュレーション ===")
-    print(f"100ゲーム実行中...\n")
+    print(f"1000ゲーム実行中...\n")
 
-    result = run_grace_simulation(num_games=100)
+    result = run_grace_simulation(num_games=1000)
 
     print("=" * 60)
     print("=== シミュレーション結果 ===")
     print("=" * 60)
 
-    print(f"\n【VP差統計】")
-    print(f"  1-2位平均VP差: {result['avg_vp_diff']:.2f}")
-    print(f"  標準偏差: {result['std_vp_diff']:.2f}")
+    print(f"\n【勝者・敗者別恩寵統計】")
+    print(f"  勝者平均恩寵: {result['avg_winner_grace']:.1f}点")
+    print(f"  敗者平均恩寵: {result['avg_loser_grace']:.1f}点")
 
-    print(f"\n【恩寵ポイント統計】")
-    print(f"  平均恩寵ポイント: {result['avg_grace_points']:.2f}")
-    print(f"  最小: {result['min_grace_points']}")
-    print(f"  最大: {result['max_grace_points']}")
+    print(f"\n【恩寵帯別統計】")
+    print("-" * 50)
+    print(f"{'恩寵帯':<10} {'プレイヤー数':<12} {'勝率':<10} {'平均VP':<10}")
+    print("-" * 50)
+    for band in ["0-4", "5-7", "8-9", "10-12", "13+"]:
+        stats = result['grace_band_stats'][band]
+        if stats['total'] > 0:
+            win_rate = stats['wins'] / stats['total'] * 100
+            avg_vp = stats['vp_sum'] / stats['total']
+            print(f"{band:<10} {stats['total']:<12} {win_rate:.1f}%{'':<5} {avg_vp:.1f}")
+        else:
+            print(f"{band:<10} {0:<12} {'-':<10} {'-':<10}")
+    print("-" * 50)
 
     print(f"\n【閾値到達率】")
-    print(f"  5点以上到達率: {result['threshold_5_rate']*100:.1f}%")
+    print(f"  8点以上到達率: {result['threshold_8_rate']*100:.1f}%")
     print(f"  10点以上到達率: {result['threshold_10_rate']*100:.1f}%")
     print(f"  13点以上到達率: {result['threshold_13_rate']*100:.1f}%")
 
@@ -2973,27 +3029,29 @@ def run_all_grace_simulations():
     print(f"  ボーナス獲得率: {result['bonus_rate']*100:.1f}%")
     print(f"  平均ボーナスVP: {result['avg_bonus_vp']:.2f}")
 
+    print(f"\n【VP差統計】")
+    print(f"  1-2位平均VP差: {result['avg_vp_diff']:.2f}")
+    print(f"  標準偏差: {result['std_vp_diff']:.2f}")
+
     print("\n" + "=" * 60)
 
     # バランス評価
     print("\n【バランス評価】")
-    if result['avg_grace_points'] < 3:
-        print("  ⚠️ 恩寵獲得量が少なすぎます（平均3点未満）")
-        print("     → 獲得手段を増やすか、獲得量を上げることを検討")
-    elif result['avg_grace_points'] > 10:
-        print("  ⚠️ 恩寵獲得量が多すぎます（平均10点超）")
-        print("     → 獲得量を調整することを検討")
-    else:
-        print("  ✓ 恩寵獲得量は適正範囲内です")
 
-    if result['threshold_5_rate'] < 0.3:
-        print("  ⚠️ 閾値到達率が低すぎます（5点到達率30%未満）")
-        print("     → 閾値を下げるか、獲得量を増やすことを検討")
-    elif result['threshold_5_rate'] > 0.8:
-        print("  ⚠️ 閾値到達が容易すぎます（5点到達率80%超）")
-        print("     → 閾値を上げることを検討")
+    # 13点到達者の勝率で判断
+    stats_13 = result['grace_band_stats']['13+']
+    if stats_13['total'] > 0:
+        win_rate_13 = stats_13['wins'] / stats_13['total'] * 100
+        if win_rate_13 < 20:
+            print(f"  ⚠️ 13点到達者の勝率が低すぎます（{win_rate_13:.1f}%）")
+            print("     → 閾値ボーナスを上げることを検討")
+        elif win_rate_13 > 35:
+            print(f"  ⚠️ 13点到達者の勝率が高すぎます（{win_rate_13:.1f}%）")
+            print("     → 閾値ボーナスを下げることを検討")
+        else:
+            print(f"  ✓ 13点到達者の勝率は適正範囲内です（{win_rate_13:.1f}%）")
     else:
-        print("  ✓ 閾値バランスは適正範囲内です")
+        print("  ⚠️ 13点到達者がいませんでした")
 
 
 if __name__ == "__main__":
