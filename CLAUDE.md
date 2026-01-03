@@ -20,17 +20,17 @@ python main.py
 
 ### Core Game Loop (`main.py`)
 
-The game runs 4 rounds, each with these phases:
+The game runs 6 rounds, each with these phases:
 
-1. **Upgrade Reveal** - Random upgrades revealed for drafting
+1. **Upgrade Reveal** - Random upgrades revealed for drafting (witches only appear in Round 3)
 2. **Trick-Taking Phase**
-   - Players see 6 cards, declare target tricks (0-4)
-   - Seal 2 cards (unplayable), play 4 tricks with remaining 4 cards
+   - Players see 5 cards, declare target tricks (0-4)
+   - Seal 1 card (unplayable), play 4 tricks with remaining 4 cards
    - No trump suit; must follow lead suit if able
    - Declaration bonus (+1 VP) for matching predicted tricks
 3. **Upgrade Selection** - Players ranked by tricks won pick upgrades or take gold
 4. **Worker Placement** - Assign workers to TRADE/HUNT/RECRUIT actions
-5. **Wage Payment** - Pay workers, tiered debt penalty (max -3 VP)
+5. **Wage Payment** - Pay initial workers only (hired workers already paid at acquisition)
 
 ### Key Data Structures
 
@@ -40,13 +40,16 @@ The game runs 4 rounds, each with these phases:
 
 ### Game Configuration (constants at top of file)
 
-- `ROUNDS = 4`, `TRICKS_PER_ROUND = 4`, `CARDS_PER_SET = 6`
-- `WAGE_CURVE = [1, 1, 2, 2]` - Initial worker wages per round
-- `UPGRADED_WAGE_CURVE = [1, 2, 3, 4]` - Hired worker wages per round
-- `START_GOLD = 5`
+- `ROUNDS = 6`, `TRICKS_PER_ROUND = 4`, `CARDS_PER_SET = 5`
+- `WAGE_CURVE = [1, 1, 2, 2, 2, 3]` - Initial worker wages per round
+- `UPGRADED_WAGE_CURVE = [0, 0, 0, 0, 0, 0]` - Hired workers pay 2 gold at acquisition, no ongoing wages
+- `START_GOLD = 7`
 - `DECLARATION_BONUS_VP = 1` (no failure penalty)
-- `DEBT_PENALTY_MULTIPLIER = 3` - VP penalty per 1 gold debt (default: 3)
+- `DEBT_PENALTY_MULTIPLIER = 2` - VP penalty per 1 gold debt
 - `DEBT_PENALTY_CAP = None` - Max penalty cap (None = unlimited)
+- Trade upgrade: +2 gold per level (base 2, max 6 at level 2)
+- Hunt upgrade: +1 VP per level (base 1, max 3 at level 2)
+- Witches only available in Round 3 (including new WITCH_GOLDCONVERT for 1:1 gold-to-VP conversion)
 
 ### Bot Logic
 

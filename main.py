@@ -29,15 +29,15 @@ from datetime import datetime
 # ======= Core Config =======
 SUITS = ["Spade", "Heart", "Diamond", "Club"]
 
-ROUNDS = 4
+ROUNDS = 6
 TRICKS_PER_ROUND = 4               # play 4 tricks
-CARDS_PER_SET = 6                  # but see 6 cards, seal 2, play 4
-SETS_PER_GAME = 4
+CARDS_PER_SET = 5                  # see 5 cards, seal 1, play 4
+SETS_PER_GAME = 6
 REVEAL_UPGRADES = 5                # players + 1 (for 4p => 5)
 
 START_GOLD = 7
-WAGE_CURVE = [1, 1, 2, 2]  # 初期ワーカーの給料（R4緩和: 3→2）
-UPGRADED_WAGE_CURVE = [1, 2, 3, 4]  # 雇用したワーカーの給料（全体緩和）
+WAGE_CURVE = [1, 1, 2, 2, 2, 3]  # 初期ワーカーの給料（6R用）
+UPGRADED_WAGE_CURVE = [0, 0, 0, 0, 0, 0]  # 雇用したワーカーは給料なし（取得時2金支払い済）
 INITIAL_WORKERS = 2  # 初期ワーカー数
 RESCUE_GOLD_FOR_4TH = 2
 TAKE_GOLD_INSTEAD = 2
@@ -247,9 +247,11 @@ class Player:
     sets: List[List[Card]] = field(default_factory=list)
 
     def trade_yield(self) -> int:
-        return 2 + self.trade_level
+        # 基礎2金 + レベルごとに+2金
+        return 2 + (self.trade_level * 2)
 
     def hunt_yield(self) -> int:
+        # 基礎1VP + レベルごとに+1VP
         return 1 + self.hunt_level
 
     def permanent_witch_count(self) -> int:
@@ -318,13 +320,13 @@ def deal_fixed_sets(
     players: List[Player],
     seed: int,
     logger: Optional[JsonlLogger],
-    max_rank: int = 6,
+    max_rank: int = 8,
     num_decks: int = 4,
 ) -> None:
     """
     Each player gets (SETS_PER_GAME * CARDS_PER_SET) cards.
-    Default: 4 decks (96 cards) + 4 trump cards = 100 cards total.
-    For 4p: needed = 4 * 4 * 6 = 96 cards => 4 cards surplus.
+    Default: 4 decks (128 cards) + 4 trump cards = 132 cards total.
+    For 4p, 6 rounds: needed = 4 * 6 * 5 = 120 cards => 12 cards surplus.
     """
     rng = random.Random(seed)
     deck: List[Card] = []
@@ -359,6 +361,7 @@ ALL_UPGRADES = [
     "WITCH_HERD",
     "WITCH_RITUAL",
     "WITCH_BARRIER",
+    "WITCH_GOLDCONVERT",
 ]
 
 # デフォルトで有効なアップグレード
@@ -375,16 +378,26 @@ UPGRADE_POOL_COUNTS = {
     "WITCH_HERD": 1,
     "WITCH_RITUAL": 1,
     "WITCH_BARRIER": 1,
+    "WITCH_GOLDCONVERT": 1,
 }
 
 
-def reveal_upgrades(rng: random.Random, n: int, enabled_upgrades: Optional[List[str]] = None) -> List[str]:
-    """有効なアップグレードからランダムに選択する"""
+def reveal_upgrades(rng: random.Random, n: int, enabled_upgrades: Optional[List[str]] = None, round_no: int = 0) -> List[str]:
+    """
+    有効なアップグレードからランダムに選択する。
+    3ラウンド目（round_no == 2）のみ魔女が公開される。
+    """
     if enabled_upgrades is None:
         enabled_upgrades = DEFAULT_ENABLED_UPGRADES
 
+    # 3ラウンド目以外は魔女を除外
+    is_witch_round = (round_no == 2)  # 0-indexed, so round 3 = index 2
+
     pool: List[str] = []
     for u in enabled_upgrades:
+        # 魔女カードは3ラウンド目のみ
+        if u.startswith("WITCH_") and not is_witch_round:
+            continue
         count = UPGRADE_POOL_COUNTS.get(u, 1)
         pool.extend([u] * count)
 
@@ -398,13 +411,14 @@ def upgrade_name(u: str) -> str:
     mapping = {
         "UP_TRADE": "交易拠点 改善（レベル+1）",
         "UP_HUNT": "魔物討伐 改善（レベル+1）",
-        "RECRUIT_INSTANT": "見習い魔女派遣（即座に+2人）",
+        "RECRUIT_INSTANT": "見習い魔女派遣（即座に+2人、2金支払い）",
         "RECRUIT_WAGE_DISCOUNT": "育成負担軽減の護符（雇用ターン給料軽減）",
         "WITCH_BLACKROAD": "《黒路の魔女》",
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
         "WITCH_HERD": "《群導の魔女》",
         "WITCH_RITUAL": "《大儀式の執行者》",
         "WITCH_BARRIER": "《結界織りの魔女》",
+        "WITCH_GOLDCONVERT": "《財宝変換の魔女》",
     }
     return mapping.get(u, u)
 
@@ -412,15 +426,16 @@ def upgrade_name(u: str) -> str:
 def upgrade_description(u: str) -> str:
     """Return detailed description for an upgrade card."""
     descriptions = {
-        "UP_TRADE": "交易アクションの収益が+1金貨増加します。最大レベル2まで強化可能。",
+        "UP_TRADE": "交易アクションの収益が+2金貨増加します。最大レベル2まで強化可能。",
         "UP_HUNT": "討伐アクションの獲得VPが+1増加します。最大レベル2まで強化可能。",
-        "RECRUIT_INSTANT": "即座に見習い2人が派遣されます。このターンから行動可能、給料も発生。",
+        "RECRUIT_INSTANT": "即座に見習い2人が派遣されます。取得時に2金支払い、以後給料なし。",
         "RECRUIT_WAGE_DISCOUNT": "雇用したターンの給料支払いが軽減されます。",
         "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+1金",
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
         "WITCH_RITUAL": "【効果】各ラウンド1回、選んだ基本アクションをもう一度実行",
         "WITCH_BARRIER": "【効果】各ラウンド最初にHUNTを行った場合、追加で+1VP",
+        "WITCH_GOLDCONVERT": "【効果】ゲーム終了時、1金で1VPに変換可能",
     }
     return descriptions.get(u, "説明なし")
 
@@ -457,6 +472,12 @@ WITCH_FLAVOR = {
 
 結界は村を守る。
 同時に、外へ出ることも難しくする。""",
+
+    "WITCH_GOLDCONVERT": """《財宝変換の魔女》
+役割：終盤・金貨活用
+
+金貨を魔力に変える秘術を持つ魔女。
+ゲーム終了時、彼女の力で金貨1枚が1VPになる。""",
 }
 
 
@@ -474,7 +495,8 @@ def apply_upgrade(player: Player, u: str) -> None:
     elif u == "UP_HUNT":
         player.hunt_level = min(2, player.hunt_level + 1)
     elif u == "RECRUIT_INSTANT":
-        # 即座にワーカー+2（このターンから使用可能、給料も発生）
+        # 即座にワーカー+2、取得時に2金支払い（以後給料なし）
+        player.gold -= 2
         player.basic_workers_total += 2
     elif u == "RECRUIT_WAGE_DISCOUNT":
         player.recruit_upgrade = u
@@ -1105,7 +1127,7 @@ def main():
     for round_no in range(ROUNDS):
         print_state(players, round_no)
 
-        revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
+        revealed = reveal_upgrades(rng, REVEAL_UPGRADES, round_no=round_no)
         print("\n公開されたアップグレード:")
         for u in revealed:
             print(" -", upgrade_name(u), f"[{u}]")
@@ -1216,12 +1238,20 @@ def main():
         logger.log("round_end", {"round": round_no + 1, "players": snapshot_players(players)})
 
     # ゲーム終了時: 金貨をVPに変換
+    # WITCH_GOLDCONVERT を持っていれば1金=1VP、それ以外は2金=1VP
     print("\n--- 金貨→VP変換 ---")
     for p in players:
-        bonus_vp = p.gold // GOLD_TO_VP_RATE
-        if bonus_vp > 0:
-            print(f"{p.name}: {p.gold}G → +{bonus_vp}VP")
-            p.vp += bonus_vp
+        if "WITCH_GOLDCONVERT" in p.witches:
+            # 財宝変換の魔女: 1金=1VP
+            bonus_vp = p.gold
+            if bonus_vp > 0:
+                print(f"{p.name}: {p.gold}G → +{bonus_vp}VP (財宝変換の魔女)")
+                p.vp += bonus_vp
+        else:
+            bonus_vp = p.gold // GOLD_TO_VP_RATE
+            if bonus_vp > 0:
+                print(f"{p.name}: {p.gold}G → +{bonus_vp}VP")
+                p.vp += bonus_vp
 
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
     logger.log("game_end", {
@@ -1410,7 +1440,7 @@ class GameEngine:
                 return False
 
             self._log(f"=== ラウンド {self.round_no + 1}/{self.config.rounds} ===")
-            self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES, self.config.enabled_upgrades)
+            self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES, self.config.enabled_upgrades, round_no=self.round_no)
             self._log(f"アップグレード: {', '.join(upgrade_name(u) for u in self.revealed_upgrades)}")
 
             self.set_index = self.round_no % SETS_PER_GAME
@@ -1659,13 +1689,21 @@ class GameEngine:
     def _finish_game(self):
         """Finalize game and determine winner."""
         # 金貨→VP変換
+        # WITCH_GOLDCONVERT を持っていれば1金=1VP、それ以外は gold_to_vp_rate金=1VP
         gold_to_vp_rate = self.config.gold_to_vp_rate
         self._log("--- 金貨→VP変換 ---")
         for p in self.players:
-            bonus_vp = p.gold // gold_to_vp_rate if gold_to_vp_rate > 0 else 0
-            if bonus_vp > 0:
-                self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP")
-                p.vp += bonus_vp
+            if "WITCH_GOLDCONVERT" in p.witches:
+                # 財宝変換の魔女: 1金=1VP
+                bonus_vp = p.gold
+                if bonus_vp > 0:
+                    self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP (財宝変換の魔女)")
+                    p.vp += bonus_vp
+            else:
+                bonus_vp = p.gold // gold_to_vp_rate if gold_to_vp_rate > 0 else 0
+                if bonus_vp > 0:
+                    self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP")
+                    p.vp += bonus_vp
 
         self.phase = "game_end"
         players_sorted = sorted(self.players, key=lambda p: (p.vp, p.gold), reverse=True)
@@ -1679,7 +1717,7 @@ class GameEngine:
 
 def run_single_game_quiet(
     seed: int,
-    max_rank: int = 6,
+    max_rank: int = 8,
     num_decks: int = 4,
 ) -> Dict[str, Any]:
     """Run a single game with all bots, no output. Returns final scores."""
@@ -1698,7 +1736,7 @@ def run_single_game_quiet(
                     num_decks=num_decks)
 
     for round_no in range(ROUNDS):
-        revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
+        revealed = reveal_upgrades(rng, REVEAL_UPGRADES, round_no=round_no)
         set_index = round_no % SETS_PER_GAME
         leader_index = round_no % len(players)
 
@@ -1770,8 +1808,12 @@ def run_single_game_quiet(
                 p.basic_workers_new_hires = 0
 
     # Gold to VP conversion at end
+    # WITCH_GOLDCONVERT を持っていれば1金=1VP、それ以外は2金=1VP
     for p in players:
-        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        if "WITCH_GOLDCONVERT" in p.witches:
+            bonus_vp = p.gold
+        else:
+            bonus_vp = p.gold // GOLD_TO_VP_RATE
         p.vp += bonus_vp
 
     # Return results
@@ -2007,7 +2049,7 @@ def run_single_game_with_debt_config(
         Player("P4", is_bot=True, rng=random.Random(seed + 4), strategy=assign_random_strategy(bot_rng)),
     ]
 
-    deal_fixed_sets(players, seed=seed, logger=None, max_rank=6, num_decks=4)
+    deal_fixed_sets(players, seed=seed, logger=None, max_rank=8, num_decks=4)
 
     # Track debt occurrences
     total_debt_events = 0
@@ -2015,7 +2057,7 @@ def run_single_game_with_debt_config(
     total_debt_penalty = 0
 
     for round_no in range(ROUNDS):
-        revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
+        revealed = reveal_upgrades(rng, REVEAL_UPGRADES, round_no=round_no)
         set_index = round_no % SETS_PER_GAME
         leader_index = round_no % len(players)
 
@@ -2123,8 +2165,12 @@ def run_single_game_with_debt_config(
                 p.basic_workers_new_hires = 0
 
     # Gold to VP conversion at end
+    # WITCH_GOLDCONVERT を持っていれば1金=1VP、それ以外は2金=1VP
     for p in players:
-        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        if "WITCH_GOLDCONVERT" in p.witches:
+            bonus_vp = p.gold
+        else:
+            bonus_vp = p.gold // GOLD_TO_VP_RATE
         p.vp += bonus_vp
 
     # Return results
