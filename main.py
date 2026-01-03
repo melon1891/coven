@@ -70,10 +70,16 @@ GRACE_RITUAL_GOLD_COST = 3
 GRACE_RITUAL_GAIN = 2
 # 恩寵獲得: 宣言0成功
 GRACE_DECLARATION_ZERO_BONUS = 1
+# 恩寵獲得: トリテ0勝
+GRACE_ZERO_TRICKS_BONUS = 1
+# 4位ボーナス: 恩寵選択時の獲得量
+GRACE_4TH_PLACE_BONUS = 1
 
 ACTIONS = ["TRADE", "HUNT", "RECRUIT"]
 
 # === CPU性格定義 ===
+# grace_awareness: 恩寵獲得の意識（0=無関心, 0.5=適度, 1=積極的）
+# prefer_grace: 恩寵を最優先するか（恩寵特化用）
 STRATEGIES = {
     'CONSERVATIVE': {
         'name': '堅実',
@@ -83,6 +89,7 @@ STRATEGIES = {
         'prefer_gold': True,
         'hunt_ratio': 0.2,
         'accept_debt': 0,
+        'grace_awareness': 0.3,  # 閾値近ければ恩寵も考慮
     },
     'VP_AGGRESSIVE': {
         'name': 'VPつっぱ',
@@ -92,6 +99,7 @@ STRATEGIES = {
         'prefer_gold': False,
         'hunt_ratio': 0.8,
         'accept_debt': 99,
+        'grace_awareness': 0.4,  # 儀式・祝福魔女を時々取る
     },
     'BALANCED': {
         'name': 'バランス',
@@ -101,6 +109,7 @@ STRATEGIES = {
         'prefer_gold': False,
         'hunt_ratio': 0.5,
         'accept_debt': 4,
+        'grace_awareness': 0.5,  # バランスよく恩寵も狙う
     },
     'DEBT_AVOID': {
         'name': '借金回避',
@@ -110,6 +119,18 @@ STRATEGIES = {
         'prefer_gold': False,
         'hunt_ratio': 0.4,
         'accept_debt': 1,
+        'grace_awareness': 0.4,  # 金貨不要の恩寵は取る
+    },
+    'GRACE_FOCUSED': {
+        'name': '恩寵特化',
+        'name_en': 'Grace Focus',
+        'desc': '恩寵ポイント最優先、閾値ボーナス狙い',
+        'max_workers': 3,
+        'prefer_gold': False,
+        'hunt_ratio': 0.3,
+        'accept_debt': 2,
+        'grace_awareness': 1.0,  # 常に恩寵優先
+        'prefer_grace': True,    # 4位ボーナスも恩寵を選択
     },
 }
 
@@ -669,15 +690,41 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
         strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
         current_workers = player.basic_workers_total + player.basic_workers_new_hires
         expected_wage = calc_expected_wage(player, round_no)
+        grace_awareness = strat.get('grace_awareness', 0.5)
 
-        # 堅実: 常に金貨優先
+        # 恩寵閾値への近さをチェック（全性格共通）
+        grace_near_threshold = False
+        if GRACE_TEST_MODE:
+            for threshold, _ in GRACE_THRESHOLD_BONUS:
+                diff = threshold - player.grace_points
+                if 0 < diff <= 3:  # 閾値まであと3点以内
+                    grace_near_threshold = True
+                    break
+
+        # 恩寵特化: 儀式・祝福魔女を最優先
+        if strat.get('prefer_grace', False):
+            if 'UP_RITUAL' in available:
+                return 'UP_RITUAL'
+            if 'WITCH_BLESSING' in available:
+                return 'WITCH_BLESSING'
+
+        # 堅実: 常に金貨優先（ただし閾値近ければ祝福魔女は検討）
         if strat['prefer_gold']:
+            if grace_near_threshold and 'WITCH_BLESSING' in available:
+                if player.rng.random() < grace_awareness:
+                    return 'WITCH_BLESSING'
             return "GOLD"
 
         # VPつっぱ: 常にアップグレード優先
         if player.strategy == 'VP_AGGRESSIVE':
             if 'RECRUIT_INSTANT' in available and current_workers < strat['max_workers']:
                 return 'RECRUIT_INSTANT'
+            # 恩寵アップグレードも考慮
+            if grace_near_threshold:
+                if 'UP_RITUAL' in available and player.rng.random() < grace_awareness:
+                    return 'UP_RITUAL'
+                if 'WITCH_BLESSING' in available and player.rng.random() < grace_awareness:
+                    return 'WITCH_BLESSING'
             for u in available:
                 if u.startswith('UP_') or u.startswith('WITCH_'):
                     return u
@@ -688,17 +735,36 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
             if player.gold < expected_wage + 3:
                 return 'GOLD'
 
+        # 恩寵特化: ワーカー補充より恩寵優先
+        if strat.get('prefer_grace', False):
+            if 'UP_RITUAL' in available:
+                return 'UP_RITUAL'
+            if 'WITCH_BLESSING' in available:
+                return 'WITCH_BLESSING'
+
         # バランス/借金回避: ワーカー上限まで雇用、それ以外はアップグレード
         if current_workers < strat['max_workers']:
             if 'RECRUIT_INSTANT' in available:
                 return 'RECRUIT_INSTANT'
 
-        # アップグレード優先度
+        # アップグレード優先度（恩寵意識を反映）
+        # 閾値に近い場合は恩寵アップグレードを優先
+        if grace_near_threshold and player.rng.random() < grace_awareness:
+            if 'UP_RITUAL' in available:
+                return 'UP_RITUAL'
+            if 'WITCH_BLESSING' in available:
+                return 'WITCH_BLESSING'
+
         for u in available:
             if u.startswith('UP_HUNT'):
                 return u
             if u.startswith('UP_TRADE'):
                 return u
+
+        # 恩寵アップグレードを通常優先度で検討
+        if player.rng.random() < grace_awareness:
+            if 'UP_RITUAL' in available:
+                return 'UP_RITUAL'
 
         for u in available:
             if u.startswith('WITCH_'):
@@ -724,6 +790,53 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
                 return available[idx - 1]
         except ValueError:
             pass
+        print("無効な選択です。")
+
+
+def choose_4th_place_bonus(player: Player, logger: Optional[JsonlLogger] = None, round_no: int = 0) -> str:
+    """
+    4位ボーナスとして2金か1恩寵かを選択する。
+    恩寵システムが無効の場合は自動的に金貨を獲得。
+    Returns: "GOLD" or "GRACE"
+    """
+    if not GRACE_TEST_MODE:
+        # 恩寵システム無効時は金貨のみ
+        player.gold += RESCUE_GOLD_FOR_4TH
+        return "GOLD"
+
+    if player.is_bot:
+        # ボットの選択ロジック
+        strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
+
+        # 恩寵特化は常に恩寵を選択
+        if strat.get('prefer_grace', False):
+            player.grace_points += GRACE_4TH_PLACE_BONUS
+            return "GRACE"
+
+        # 恩寵閾値に近い場合は恩寵を選択
+        for threshold, bonus in GRACE_THRESHOLD_BONUS:
+            diff = threshold - player.grace_points
+            if 0 < diff <= 2:  # 閾値まであと2点以内
+                player.grace_points += GRACE_4TH_PLACE_BONUS
+                return "GRACE"
+
+        # それ以外は金貨を選択
+        player.gold += RESCUE_GOLD_FOR_4TH
+        return "GOLD"
+
+    # 人間プレイヤー
+    print(f"\n{player.name}, 4位ボーナスを選んでください:")
+    print(f"  1. {RESCUE_GOLD_FOR_4TH}金貨を獲得")
+    print(f"  2. {GRACE_4TH_PLACE_BONUS}恩寵を獲得")
+
+    while True:
+        s = input("番号を入力 (1 or 2): ").strip()
+        if s == "1":
+            player.gold += RESCUE_GOLD_FOR_4TH
+            return "GOLD"
+        elif s == "2":
+            player.grace_points += GRACE_4TH_PLACE_BONUS
+            return "GRACE"
         print("無効な選択です。")
 
 
@@ -787,6 +900,20 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
                     "bonus_vp": DECLARATION_BONUS_VP,
                     "grace_bonus": grace_bonus,
                 })
+
+    # 恩寵システム: トリテ0勝で恩寵ボーナス（宣言0成功とは別）
+    if GRACE_TEST_MODE:
+        for p in players:
+            if p.tricks_won_this_round == 0:
+                p.grace_points += GRACE_ZERO_TRICKS_BONUS
+                print(f"0勝ボーナス: {p.name} がトリック0勝 -> +{GRACE_ZERO_TRICKS_BONUS} 恩寵")
+                if logger:
+                    logger.log("grace_zero_tricks_bonus", {
+                        "round": round_no + 1,
+                        "player": p.name,
+                        "grace_gained": GRACE_ZERO_TRICKS_BONUS,
+                        "grace_points": p.grace_points,
+                    })
 
 
 def grace_hand_swap(
@@ -1192,12 +1319,39 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
         expected_wage = calc_expected_wage(player, round_no)
         gold_needed = expected_wage - player.gold
         current_gold = player.gold  # Track gold for RITUAL decisions
+        grace_awareness = strat.get('grace_awareness', 0.5)
+
+        # 恩寵閾値への近さをチェック
+        grace_near_threshold = False
+        if GRACE_TEST_MODE:
+            for threshold, _ in GRACE_THRESHOLD_BONUS:
+                diff = threshold - player.grace_points
+                if 0 < diff <= 4:  # 閾値まであと4点以内
+                    grace_near_threshold = True
+                    break
 
         for _ in range(n):
+            # 恩寵特化: 儀式を積極的に選択
+            if (GRACE_TEST_MODE and player.has_ritual and
+                strat.get('prefer_grace', False) and
+                current_gold >= GRACE_RITUAL_GOLD_COST + max(0, expected_wage - 2)):
+                actions.append("RITUAL")
+                current_gold -= GRACE_RITUAL_GOLD_COST
+                continue
+
+            # 全性格共通: 閾値に近い場合、grace_awarenessに応じて儀式を選択
+            if (GRACE_TEST_MODE and player.has_ritual and
+                grace_near_threshold and
+                current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
+                player.rng.random() < grace_awareness * 0.6):  # grace_awareness×60%で儀式
+                actions.append("RITUAL")
+                current_gold -= GRACE_RITUAL_GOLD_COST
+                continue
+
             # ボットの儀式選択: 金貨に余裕があり、儀式が可能な場合、一定確率で選択
             if (GRACE_TEST_MODE and player.has_ritual and
                 current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
-                player.rng.random() < 0.3):  # 30%の確率で儀式を選択
+                player.rng.random() < grace_awareness * 0.3):  # grace_awareness×30%で儀式
                 actions.append("RITUAL")
                 current_gold -= GRACE_RITUAL_GOLD_COST
                 continue
@@ -1221,6 +1375,12 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                         actions.append("HUNT")
                     else:
                         actions.append("TRADE")
+            elif player.strategy == 'GRACE_FOCUSED':
+                # 恩寵特化: HUNT控えめ、TRADEで金貨を確保（儀式用）
+                if player.rng.random() < strat['hunt_ratio']:
+                    actions.append("HUNT")
+                else:
+                    actions.append("TRADE")
             else:  # BALANCED
                 # バランス: 確率でHUNT/TRADE
                 if player.rng.random() < strat['hunt_ratio']:
@@ -1500,14 +1660,20 @@ def main():
 
         fourth = ranked[-1]
         before_gold = fourth.gold
-        fourth.gold += RESCUE_GOLD_FOR_4TH
-        print(f"\n救済: {fourth.name} が +{RESCUE_GOLD_FOR_4TH} 金貨を獲得 (4位ボーナス)")
+        before_grace = fourth.grace_points
+        bonus_choice = choose_4th_place_bonus(fourth, logger, round_no)
+        if bonus_choice == "GOLD":
+            print(f"\n救済: {fourth.name} が +{RESCUE_GOLD_FOR_4TH} 金貨を獲得 (4位ボーナス)")
+        else:
+            print(f"\n救済: {fourth.name} が +{GRACE_4TH_PLACE_BONUS} 恩寵を獲得 (4位ボーナス)")
         logger.log("rescue", {
             "round": round_no + 1,
             "player": fourth.name,
+            "choice": bonus_choice,
             "gold_before": before_gold,
             "gold_after": fourth.gold,
-            "amount": RESCUE_GOLD_FOR_4TH,
+            "grace_before": before_grace,
+            "grace_after": fourth.grace_points,
         })
 
         print("\n--- ワーカー配置 ---")
@@ -2176,7 +2342,7 @@ def run_single_game_quiet(
             upgrade_deck.discard_remaining(revealed)
 
         fourth = ranked[-1]
-        fourth.gold += RESCUE_GOLD_FOR_4TH
+        choose_4th_place_bonus(fourth, None, round_no)
 
         # Worker placement
         for p in players:
@@ -2523,7 +2689,7 @@ def run_single_game_with_debt_config(
             upgrade_deck.discard_remaining(revealed)
 
         fourth = ranked[-1]
-        fourth.gold += RESCUE_GOLD_FOR_4TH
+        choose_4th_place_bonus(fourth, None, round_no)
 
         # Worker placement (with smart bot that considers debt penalty)
         for p in players:
