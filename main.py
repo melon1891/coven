@@ -191,6 +191,7 @@ class GameConfig:
     gold_to_vp_rate: int = GOLD_TO_VP_RATE
     take_gold_instead: int = TAKE_GOLD_INSTEAD
     rescue_gold_for_4th: int = RESCUE_GOLD_FOR_4TH
+    enabled_upgrades: Optional[List[str]] = None  # None = 全アップグレード有効
 
     def to_dict(self) -> Dict[str, Any]:
         """設定を辞書形式で返す"""
@@ -203,6 +204,7 @@ class GameConfig:
             "gold_to_vp_rate": self.gold_to_vp_rate,
             "take_gold_instead": self.take_gold_instead,
             "rescue_gold_for_4th": self.rescue_gold_for_4th,
+            "enabled_upgrades": self.enabled_upgrades,
         }
 
 
@@ -342,14 +344,49 @@ def deal_fixed_sets(
 
 # ======= Upgrades =======
 
-def reveal_upgrades(rng: random.Random, n: int) -> List[str]:
-    pool = (
-        ["UP_TRADE"] * 6 +
-        ["UP_HUNT"] * 6 +
-        ["RECRUIT_INSTANT"] * 2 +
-        ["RECRUIT_WAGE_DISCOUNT"] * 2 +
-        ["WITCH_BLACKROAD", "WITCH_BLOODHUNT", "WITCH_HERD", "WITCH_RITUAL", "WITCH_BARRIER"]
-    )
+# 利用可能なアップグレードのリスト（設定画面で使用）
+ALL_UPGRADES = [
+    "UP_TRADE",
+    "UP_HUNT",
+    "RECRUIT_INSTANT",
+    "RECRUIT_WAGE_DISCOUNT",
+    "WITCH_BLACKROAD",
+    "WITCH_BLOODHUNT",
+    "WITCH_HERD",
+    "WITCH_RITUAL",
+    "WITCH_BARRIER",
+]
+
+# デフォルトで有効なアップグレード
+DEFAULT_ENABLED_UPGRADES = ALL_UPGRADES[:]
+
+# 各アップグレードのプール内の枚数
+UPGRADE_POOL_COUNTS = {
+    "UP_TRADE": 6,
+    "UP_HUNT": 6,
+    "RECRUIT_INSTANT": 2,
+    "RECRUIT_WAGE_DISCOUNT": 2,
+    "WITCH_BLACKROAD": 1,
+    "WITCH_BLOODHUNT": 1,
+    "WITCH_HERD": 1,
+    "WITCH_RITUAL": 1,
+    "WITCH_BARRIER": 1,
+}
+
+
+def reveal_upgrades(rng: random.Random, n: int, enabled_upgrades: Optional[List[str]] = None) -> List[str]:
+    """有効なアップグレードからランダムに選択する"""
+    if enabled_upgrades is None:
+        enabled_upgrades = DEFAULT_ENABLED_UPGRADES
+
+    pool: List[str] = []
+    for u in enabled_upgrades:
+        count = UPGRADE_POOL_COUNTS.get(u, 1)
+        pool.extend([u] * count)
+
+    if not pool:
+        return []
+
     return [rng.choice(pool) for _ in range(n)]
 
 
@@ -1373,7 +1410,7 @@ class GameEngine:
                 return False
 
             self._log(f"=== ラウンド {self.round_no + 1}/{ROUNDS} ===")
-            self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES)
+            self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES, self.config.enabled_upgrades)
             self._log(f"アップグレード: {', '.join(upgrade_name(u) for u in self.revealed_upgrades)}")
 
             self.set_index = self.round_no % SETS_PER_GAME
