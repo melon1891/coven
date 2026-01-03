@@ -170,9 +170,11 @@ class JsonlLogger:
 @dataclass(frozen=True)
 class Card:
     suit: str  # "Spade", "Heart", "Diamond", "Club", "Trump"
-    rank: int  # 1..13 (通常) or 1..4 (切り札)
+    rank: int  # 1..13 (通常) or 0 (切り札、ランクなし)
 
     def __str__(self) -> str:
+        if self.is_trump():
+            return "T"  # 切り札はランクなし
         return f"{self.suit[0]}{self.rank:02d}"
 
     def is_trump(self) -> bool:
@@ -321,15 +323,15 @@ def deal_fixed_sets(
 ) -> None:
     """
     Each player gets (SETS_PER_GAME * CARDS_PER_SET) cards.
-    Default: 4 decks (96 cards) + 8 trump cards (T1-T4 x2) = 104 cards total.
-    For 4p: needed = 4 * 4 * 6 = 96 cards => 8 cards surplus.
+    Default: 4 decks (96 cards) + 4 trump cards = 100 cards total.
+    For 4p: needed = 4 * 4 * 6 = 96 cards => 4 cards surplus.
     """
     rng = random.Random(seed)
     deck: List[Card] = []
     for _ in range(num_decks):
         deck.extend([Card(s, r) for s in SUITS for r in range(1, max_rank + 1)])
-    # 切り札カード追加（T1〜T4を2枚ずつ、計8枚）
-    trumps = [Card("Trump", r) for r in range(1, 5) for _ in range(2)]
+    # 切り札カード追加（ランクなし、4枚）
+    trumps = [Card("Trump", 0) for _ in range(4)]
     deck.extend(trumps)
     rng.shuffle(deck)
 
@@ -665,7 +667,7 @@ def seal_cards(player: Player, hand: List[Card], set_index: int) -> List[Card]:
 def trick_winner(lead_suit: str, plays: List[Tuple[Player, Card]]) -> Player:
     """
     Trump rules:
-      - If any trump card is played, highest trump wins.
+      - If any trump card is played, first trump player (closest to leader) wins.
       - Otherwise, highest card in lead suit wins.
     Tiebreaker (same rank):
       - Leader wins if tied.
@@ -675,12 +677,8 @@ def trick_winner(lead_suit: str, plays: List[Tuple[Player, Card]]) -> Player:
     # 切り札が出ているか確認
     trumps = [(i, p, c) for i, (p, c) in enumerate(plays) if c.is_trump()]
     if trumps:
-        # 切り札の中で最高ランクを探す
-        max_rank = max(c.rank for _, _, c in trumps)
-        # 同ランクの場合、親に近い人（インデックスが小さい方）が勝ち
-        for i, p, c in trumps:
-            if c.rank == max_rank:
-                return p
+        # 切り札はランクなし、最初に出した人（親に近い人）が勝ち
+        return trumps[0][1]
 
     # 切り札なし → リードスートの最高ランク
     leads = [(i, p, c) for i, (p, c) in enumerate(plays) if c.suit == lead_suit]
@@ -1814,7 +1812,7 @@ def run_all_simulations():
     """Run simulations for rank ranges 6-10, 100 games each.
 
     Note: max_rank must be at least 6 for 4 decks to have enough cards.
-    4 decks * 4 suits * 6 ranks = 96 cards + 8 trump = 104 total (need 96 for 4p*4r*6c)
+    4 decks * 4 suits * 6 ranks = 96 cards + 4 trump = 100 total (need 96 for 4p*4r*6c)
     """
     print("=== カードランク最適化シミュレーション ===")
     print(f"各設定で100ゲーム実行中...\n")
@@ -1842,7 +1840,7 @@ def run_all_simulations():
 
 
 def run_deck_simulation(num_decks: int, num_games: int = 100) -> Dict[str, Any]:
-    """Run simulation with specified deck count. Trump is fixed at T1-T4 x2 = 8 cards."""
+    """Run simulation with specified deck count. Trump is fixed at 4 cards (no rank)."""
     results = []
     for game_id in range(num_games):
         seed = game_id * 1000 + num_decks * 100
@@ -1855,7 +1853,7 @@ def run_deck_simulation(num_decks: int, num_games: int = 100) -> Dict[str, Any]:
 
     return {
         "num_decks": num_decks,
-        "total_cards": num_decks * 24 + 8,  # 4suits * 6ranks = 24, plus 8 trumps
+        "total_cards": num_decks * 24 + 4,  # 4suits * 6ranks = 24, plus 4 trumps
         "num_games": num_games,
         "avg_vp_diff": avg_diff,
         "std_vp_diff": std_diff,
@@ -1863,9 +1861,9 @@ def run_deck_simulation(num_decks: int, num_games: int = 100) -> Dict[str, Any]:
 
 
 def run_all_deck_simulations():
-    """Run simulations for different deck counts. Trump is fixed at T1-T4 x2."""
+    """Run simulations for different deck counts. Trump is fixed at 4 cards (no rank)."""
     print("=== デッキ数最適化シミュレーション ===")
-    print("(切り札は T1〜T4 x 2枚 = 8枚固定)")
+    print("(切り札は4枚固定、ランクなし)")
     print(f"各設定で100ゲーム実行中...\n")
 
     # テスト設定: デッキ3-5
