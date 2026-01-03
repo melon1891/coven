@@ -2326,6 +2326,15 @@ def run_single_game_quiet(
         for p in players:
             if p.tricks_won_this_round == p.declared_tricks:
                 p.vp += DECLARATION_BONUS_VP
+                # 宣言0成功で恩寵ボーナス
+                if GRACE_TEST_MODE and p.declared_tricks == 0:
+                    p.grace_points += GRACE_DECLARATION_ZERO_BONUS
+
+        # 0トリックボーナス（宣言に関わらず0勝で恩寵獲得）
+        if GRACE_TEST_MODE:
+            for p in players:
+                if p.tricks_won_this_round == 0:
+                    p.grace_points += GRACE_ZERO_TRICKS_BONUS
 
         # Upgrade pick
         ranked = rank_players_for_upgrade(players, leader_index)
@@ -2353,6 +2362,12 @@ def run_single_game_quiet(
         for p in players:
             pay_wages_and_debt(p, round_no)
 
+        # WITCH_BLESSINGによる恩寵獲得
+        if GRACE_TEST_MODE:
+            for p in players:
+                if "WITCH_BLESSING" in p.witches:
+                    p.grace_points += 1
+
         # Activate hires
         for p in players:
             if p.basic_workers_new_hires > 0:
@@ -2368,14 +2383,34 @@ def run_single_game_quiet(
             bonus_vp = p.gold // GOLD_TO_VP_RATE
         p.vp += bonus_vp
 
+    # Grace threshold bonus at game end
+    grace_stats = {"points": [], "threshold_reached": [], "bonus_vp": []}
+    if GRACE_TEST_MODE:
+        for p in players:
+            grace_stats["points"].append(p.grace_points)
+            threshold_bonus = 0
+            threshold_reached = 0
+            # リストは高い順(15→10→5)なので、最初にマッチした閾値が最高
+            for threshold, bonus in GRACE_THRESHOLD_BONUS:
+                if p.grace_points >= threshold:
+                    threshold_bonus = bonus
+                    threshold_reached = threshold
+                    break  # 最高閾値のみ適用
+            p.vp += threshold_bonus
+            grace_stats["threshold_reached"].append(threshold_reached)
+            grace_stats["bonus_vp"].append(threshold_bonus)
+
     # Return results
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
     vps = [p.vp for p in players_sorted]
+    grace_points = [p.grace_points for p in players_sorted]
     return {
         "winner": players_sorted[0].name,
         "vps": vps,
         "vp_diff_1st_2nd": vps[0] - vps[1],
         "vp_diff_1st_last": vps[0] - vps[-1],
+        "grace_points": grace_points,
+        "grace_stats": grace_stats,
     }
 
 
@@ -2853,12 +2888,121 @@ def run_all_debt_penalty_simulations():
     print(f"  - 負債発生率: {best['debt_rate']*100:.0f}%")
 
 
+# ======= Grace Point Simulation =======
+
+def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
+    """Run simulation and collect grace system statistics."""
+    results = []
+    for game_id in range(num_games):
+        seed = game_id * 1000
+        result = run_single_game_quiet(seed, max_rank=6)
+        results.append(result)
+
+    # Aggregate grace statistics
+    all_grace_points = []
+    all_threshold_reached = []
+    all_bonus_vp = []
+
+    for r in results:
+        all_grace_points.extend(r.get("grace_points", [0, 0, 0, 0]))
+        stats = r.get("grace_stats", {})
+        all_threshold_reached.extend(stats.get("threshold_reached", [0, 0, 0, 0]))
+        all_bonus_vp.extend(stats.get("bonus_vp", [0, 0, 0, 0]))
+
+    # Calculate VP diff statistics
+    vp_diffs = [r["vp_diff_1st_2nd"] for r in results]
+    avg_vp_diff = sum(vp_diffs) / len(vp_diffs) if vp_diffs else 0
+    std_vp_diff = (sum((x - avg_vp_diff) ** 2 for x in vp_diffs) / len(vp_diffs)) ** 0.5 if vp_diffs else 0
+
+    # Grace statistics
+    avg_grace = sum(all_grace_points) / len(all_grace_points) if all_grace_points else 0
+    max_grace = max(all_grace_points) if all_grace_points else 0
+    min_grace = min(all_grace_points) if all_grace_points else 0
+
+    # Threshold rates
+    threshold_5_count = sum(1 for t in all_threshold_reached if t >= 5)
+    threshold_10_count = sum(1 for t in all_threshold_reached if t >= 10)
+    threshold_15_count = sum(1 for t in all_threshold_reached if t >= 15)
+    total_players = len(all_threshold_reached)
+
+    # Bonus VP statistics
+    avg_bonus_vp = sum(all_bonus_vp) / len(all_bonus_vp) if all_bonus_vp else 0
+    players_with_bonus = sum(1 for b in all_bonus_vp if b > 0)
+
+    return {
+        "num_games": num_games,
+        "avg_vp_diff": avg_vp_diff,
+        "std_vp_diff": std_vp_diff,
+        "avg_grace_points": avg_grace,
+        "max_grace_points": max_grace,
+        "min_grace_points": min_grace,
+        "threshold_5_rate": threshold_5_count / total_players if total_players > 0 else 0,
+        "threshold_10_rate": threshold_10_count / total_players if total_players > 0 else 0,
+        "threshold_15_rate": threshold_15_count / total_players if total_players > 0 else 0,
+        "avg_bonus_vp": avg_bonus_vp,
+        "bonus_rate": players_with_bonus / total_players if total_players > 0 else 0,
+    }
+
+
+def run_all_grace_simulations():
+    """Run grace point system analysis simulation."""
+    print("=== 恩寵ポイントシステム分析シミュレーション ===")
+    print(f"100ゲーム実行中...\n")
+
+    result = run_grace_simulation(num_games=100)
+
+    print("=" * 60)
+    print("=== シミュレーション結果 ===")
+    print("=" * 60)
+
+    print(f"\n【VP差統計】")
+    print(f"  1-2位平均VP差: {result['avg_vp_diff']:.2f}")
+    print(f"  標準偏差: {result['std_vp_diff']:.2f}")
+
+    print(f"\n【恩寵ポイント統計】")
+    print(f"  平均恩寵ポイント: {result['avg_grace_points']:.2f}")
+    print(f"  最小: {result['min_grace_points']}")
+    print(f"  最大: {result['max_grace_points']}")
+
+    print(f"\n【閾値到達率】")
+    print(f"  5点以上到達率: {result['threshold_5_rate']*100:.1f}%")
+    print(f"  10点以上到達率: {result['threshold_10_rate']*100:.1f}%")
+    print(f"  15点以上到達率: {result['threshold_15_rate']*100:.1f}%")
+
+    print(f"\n【恩寵ボーナス統計】")
+    print(f"  ボーナス獲得率: {result['bonus_rate']*100:.1f}%")
+    print(f"  平均ボーナスVP: {result['avg_bonus_vp']:.2f}")
+
+    print("\n" + "=" * 60)
+
+    # バランス評価
+    print("\n【バランス評価】")
+    if result['avg_grace_points'] < 3:
+        print("  ⚠️ 恩寵獲得量が少なすぎます（平均3点未満）")
+        print("     → 獲得手段を増やすか、獲得量を上げることを検討")
+    elif result['avg_grace_points'] > 10:
+        print("  ⚠️ 恩寵獲得量が多すぎます（平均10点超）")
+        print("     → 獲得量を調整することを検討")
+    else:
+        print("  ✓ 恩寵獲得量は適正範囲内です")
+
+    if result['threshold_5_rate'] < 0.3:
+        print("  ⚠️ 閾値到達率が低すぎます（5点到達率30%未満）")
+        print("     → 閾値を下げるか、獲得量を増やすことを検討")
+    elif result['threshold_5_rate'] > 0.8:
+        print("  ⚠️ 閾値到達が容易すぎます（5点到達率80%超）")
+        print("     → 閾値を上げることを検討")
+    else:
+        print("  ✓ 閾値バランスは適正範囲内です")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="魔女協会 Card Game")
     parser.add_argument("--simulate", action="store_true", help="Run rank optimization simulation")
     parser.add_argument("--simulate-deck", action="store_true", help="Run deck/trump count optimization simulation")
     parser.add_argument("--simulate-debt-penalty", action="store_true", help="Run debt penalty optimization simulation")
+    parser.add_argument("--simulate-grace", action="store_true", help="Run grace point system simulation")
     args = parser.parse_args()
 
     try:
@@ -2868,6 +3012,8 @@ if __name__ == "__main__":
             run_all_deck_simulations()
         elif args.simulate_debt_penalty:
             run_all_debt_penalty_simulations()
+        elif args.simulate_grace:
+            run_all_grace_simulations()
         else:
             main()
     except KeyboardInterrupt:
