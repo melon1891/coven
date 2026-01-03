@@ -2922,7 +2922,7 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
     # Threshold rates
     threshold_5_count = sum(1 for t in all_threshold_reached if t >= 5)
     threshold_10_count = sum(1 for t in all_threshold_reached if t >= 10)
-    threshold_15_count = sum(1 for t in all_threshold_reached if t >= 15)
+    threshold_13_count = sum(1 for t in all_threshold_reached if t >= 13)
     total_players = len(all_threshold_reached)
 
     # Bonus VP statistics
@@ -2938,7 +2938,7 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
         "min_grace_points": min_grace,
         "threshold_5_rate": threshold_5_count / total_players if total_players > 0 else 0,
         "threshold_10_rate": threshold_10_count / total_players if total_players > 0 else 0,
-        "threshold_15_rate": threshold_15_count / total_players if total_players > 0 else 0,
+        "threshold_13_rate": threshold_13_count / total_players if total_players > 0 else 0,
         "avg_bonus_vp": avg_bonus_vp,
         "bonus_rate": players_with_bonus / total_players if total_players > 0 else 0,
     }
@@ -2967,7 +2967,7 @@ def run_all_grace_simulations():
     print(f"\n【閾値到達率】")
     print(f"  5点以上到達率: {result['threshold_5_rate']*100:.1f}%")
     print(f"  10点以上到達率: {result['threshold_10_rate']*100:.1f}%")
-    print(f"  15点以上到達率: {result['threshold_15_rate']*100:.1f}%")
+    print(f"  13点以上到達率: {result['threshold_13_rate']*100:.1f}%")
 
     print(f"\n【恩寵ボーナス統計】")
     print(f"  ボーナス獲得率: {result['bonus_rate']*100:.1f}%")
