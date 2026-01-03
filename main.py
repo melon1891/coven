@@ -183,6 +183,7 @@ class Card:
 @dataclass
 class GameConfig:
     """ゲームルールに関わる設定パラメーター"""
+    rounds: int = ROUNDS  # ラウンド数 (4 or 8)
     start_gold: int = START_GOLD
     initial_workers: int = INITIAL_WORKERS
     declaration_bonus_vp: int = DECLARATION_BONUS_VP
@@ -196,6 +197,7 @@ class GameConfig:
     def to_dict(self) -> Dict[str, Any]:
         """設定を辞書形式で返す"""
         return {
+            "rounds": self.rounds,
             "start_gold": self.start_gold,
             "initial_workers": self.initial_workers,
             "declaration_bonus_vp": self.declaration_bonus_vp,
@@ -1405,11 +1407,11 @@ class GameEngine:
 
         # Phase: round_start
         if self.phase == "round_start":
-            if self.round_no >= ROUNDS:
+            if self.round_no >= self.config.rounds:
                 self._finish_game()
                 return False
 
-            self._log(f"=== ラウンド {self.round_no + 1}/{ROUNDS} ===")
+            self._log(f"=== ラウンド {self.round_no + 1}/{self.config.rounds} ===")
             self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES, self.config.enabled_upgrades)
             self._log(f"アップグレード: {', '.join(upgrade_name(u) for u in self.revealed_upgrades)}")
 
