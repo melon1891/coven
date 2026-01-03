@@ -378,6 +378,52 @@ UPGRADE_POOL_COUNTS = {
 }
 
 
+class UpgradeDeck:
+    """アップグレードカードのデッキと捨て札を管理するクラス。
+
+    各ラウンドで選ばれなかったカードは捨て札に移動し、
+    デッキが足りなくなったら捨て札をリシャッフルして補充する。
+    """
+
+    def __init__(self, rng: random.Random, enabled_upgrades: Optional[List[str]] = None):
+        self.rng = rng
+        if enabled_upgrades is None:
+            enabled_upgrades = DEFAULT_ENABLED_UPGRADES
+        self.enabled_upgrades = enabled_upgrades
+
+        # 初期デッキを構築
+        self.deck: List[str] = []
+        for u in enabled_upgrades:
+            count = UPGRADE_POOL_COUNTS.get(u, 1)
+            self.deck.extend([u] * count)
+
+        # シャッフル
+        self.rng.shuffle(self.deck)
+
+        # 捨て札
+        self.discard: List[str] = []
+
+    def _reshuffle_if_needed(self, n: int) -> None:
+        """デッキ枚数が足りなければ捨て札をリシャッフルして補充"""
+        if len(self.deck) < n and len(self.discard) > 0:
+            self.deck.extend(self.discard)
+            self.discard = []
+            self.rng.shuffle(self.deck)
+
+    def reveal(self, n: int) -> List[str]:
+        """デッキからn枚を公開（引く）"""
+        self._reshuffle_if_needed(n)
+
+        # デッキから引ける分だけ引く
+        drawn = self.deck[:n]
+        self.deck = self.deck[n:]
+        return drawn
+
+    def discard_remaining(self, cards: List[str]) -> None:
+        """選ばれなかったカードを捨て札に移動"""
+        self.discard.extend(cards)
+
+
 def reveal_upgrades(rng: random.Random, n: int, enabled_upgrades: Optional[List[str]] = None) -> List[str]:
     """有効なアップグレードからランダムに選択する"""
     if enabled_upgrades is None:
@@ -1102,14 +1148,22 @@ def main():
 
     deal_fixed_sets(players, seed=deal_seed, logger=logger)
 
+    # アップグレードデッキを初期化
+    upgrade_deck = UpgradeDeck(rng)
+
     for round_no in range(ROUNDS):
         print_state(players, round_no)
 
-        revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
+        revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
         print("\n公開されたアップグレード:")
         for u in revealed:
             print(" -", upgrade_name(u), f"[{u}]")
-        logger.log("reveal_upgrades", {"round": round_no + 1, "revealed": revealed[:]})
+        logger.log("reveal_upgrades", {
+            "round": round_no + 1,
+            "revealed": revealed[:],
+            "deck_remaining": len(upgrade_deck.deck),
+            "discard_pile": len(upgrade_deck.discard),
+        })
 
         leader_index = run_trick_taking(players, round_no, rng, logger)
 
@@ -1155,6 +1209,16 @@ def main():
                     "before": before,
                     "after": snapshot_players([p])[0],
                 })
+
+        # 選ばれなかったカードを捨て札に移動
+        if revealed:
+            upgrade_deck.discard_remaining(revealed)
+            logger.log("upgrade_discard", {
+                "round": round_no + 1,
+                "discarded": revealed[:],
+                "deck_remaining": len(upgrade_deck.deck),
+                "discard_pile": len(upgrade_deck.discard),
+            })
 
         fourth = ranked[-1]
         before_gold = fourth.gold
@@ -1272,6 +1336,9 @@ class GameEngine:
             p.basic_workers_total = self.config.initial_workers
 
         deal_fixed_sets(self.players, seed=self.deal_seed, logger=None)
+
+        # アップグレードデッキを初期化
+        self.upgrade_deck = UpgradeDeck(self.rng, self.config.enabled_upgrades)
 
         self.round_no = 0
         self.phase = "round_start"  # Current phase
@@ -1410,7 +1477,7 @@ class GameEngine:
                 return False
 
             self._log(f"=== ラウンド {self.round_no + 1}/{self.config.rounds} ===")
-            self.revealed_upgrades = reveal_upgrades(self.rng, REVEAL_UPGRADES, self.config.enabled_upgrades)
+            self.revealed_upgrades = self.upgrade_deck.reveal(REVEAL_UPGRADES)
             self._log(f"アップグレード: {', '.join(upgrade_name(u) for u in self.revealed_upgrades)}")
 
             self.set_index = self.round_no % SETS_PER_GAME
@@ -1490,6 +1557,11 @@ class GameEngine:
         # Phase: upgrade_pick
         if self.phase == "upgrade_pick":
             if self.upgrade_pick_index >= len(self.ranked_players):
+                # 選ばれなかったカードを捨て札に移動
+                if self.revealed_upgrades:
+                    self.upgrade_deck.discard_remaining(self.revealed_upgrades)
+                    self.revealed_upgrades = []
+
                 # Give 4th place rescue gold
                 fourth = self.ranked_players[-1]
                 rescue_gold = self.config.rescue_gold_for_4th
@@ -1697,8 +1769,11 @@ def run_single_game_quiet(
     deal_fixed_sets(players, seed=seed, logger=None, max_rank=max_rank,
                     num_decks=num_decks)
 
+    # アップグレードデッキを初期化
+    upgrade_deck = UpgradeDeck(rng)
+
     for round_no in range(ROUNDS):
-        revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
+        revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
         set_index = round_no % SETS_PER_GAME
         leader_index = round_no % len(players)
 
@@ -1750,6 +1825,10 @@ def run_single_game_quiet(
             else:
                 revealed.remove(choice)
                 apply_upgrade(p, choice)
+
+        # 選ばれなかったカードを捨て札に移動
+        if revealed:
+            upgrade_deck.discard_remaining(revealed)
 
         fourth = ranked[-1]
         fourth.gold += RESCUE_GOLD_FOR_4TH
@@ -2009,13 +2088,16 @@ def run_single_game_with_debt_config(
 
     deal_fixed_sets(players, seed=seed, logger=None, max_rank=6, num_decks=4)
 
+    # アップグレードデッキを初期化
+    upgrade_deck = UpgradeDeck(rng)
+
     # Track debt occurrences
     total_debt_events = 0
     total_debt_amount = 0
     total_debt_penalty = 0
 
     for round_no in range(ROUNDS):
-        revealed = reveal_upgrades(rng, REVEAL_UPGRADES)
+        revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
         set_index = round_no % SETS_PER_GAME
         leader_index = round_no % len(players)
 
@@ -2067,6 +2149,10 @@ def run_single_game_with_debt_config(
             else:
                 revealed.remove(choice)
                 apply_upgrade(p, choice)
+
+        # 選ばれなかったカードを捨て札に移動
+        if revealed:
+            upgrade_deck.discard_remaining(revealed)
 
         fourth = ranked[-1]
         fourth.gold += RESCUE_GOLD_FOR_4TH
