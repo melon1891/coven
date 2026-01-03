@@ -12,7 +12,8 @@ from main import (
     ACTIONS, TAKE_GOLD_INSTEAD, upgrade_name, upgrade_description, legal_cards,
     WAGE_CURVE, UPGRADED_WAGE_CURVE, STRATEGIES,
     START_GOLD, INITIAL_WORKERS, DECLARATION_BONUS_VP,
-    DEBT_PENALTY_MULTIPLIER, DEBT_PENALTY_CAP, GOLD_TO_VP_RATE, RESCUE_GOLD_FOR_4TH
+    DEBT_PENALTY_MULTIPLIER, DEBT_PENALTY_CAP, GOLD_TO_VP_RATE, RESCUE_GOLD_FOR_4TH,
+    ALL_UPGRADES, DEFAULT_ENABLED_UPGRADES,
 )
 
 st.set_page_config(page_title="coven", layout="wide")
@@ -401,6 +402,7 @@ with st.sidebar:
             "gold_to_vp_rate": GOLD_TO_VP_RATE,
             "take_gold_instead": TAKE_GOLD_INSTEAD,
             "rescue_gold_for_4th": RESCUE_GOLD_FOR_4TH,
+            "enabled_upgrades": DEFAULT_ENABLED_UPGRADES[:],
         }
 
     with st.expander("💰 初期リソース", expanded=False):
@@ -434,6 +436,46 @@ with st.sidebar:
             help="トリック最下位(4位)のプレイヤーが得る追加金貨"
         )
 
+    with st.expander("🎴 使用アップグレード", expanded=False):
+        st.caption("ゲームに登場するアップグレードカードを選択")
+
+        # 現在の有効なアップグレードを取得
+        current_enabled = st.session_state.game_config.get("enabled_upgrades", ALL_UPGRADES[:])
+
+        # 全選択/全解除ボタン
+        col_all, col_none = st.columns(2)
+        with col_all:
+            if st.button("すべて選択", key="select_all_upgrades", use_container_width=True):
+                st.session_state.game_config["enabled_upgrades"] = ALL_UPGRADES[:]
+                st.rerun()
+        with col_none:
+            if st.button("すべて解除", key="deselect_all_upgrades", use_container_width=True):
+                st.session_state.game_config["enabled_upgrades"] = []
+                st.rerun()
+
+        st.divider()
+
+        # 各アップグレードのチェックボックス
+        new_enabled = []
+        for u in ALL_UPGRADES:
+            is_checked = u in current_enabled
+            if st.checkbox(
+                upgrade_name(u),
+                value=is_checked,
+                key=f"upgrade_toggle_{u}",
+                help=upgrade_description(u)
+            ):
+                new_enabled.append(u)
+
+        st.session_state.game_config["enabled_upgrades"] = new_enabled
+
+        # 有効なアップグレード数を表示
+        count = len(new_enabled)
+        if count == 0:
+            st.warning("⚠️ 少なくとも1つのアップグレードを選択してください")
+        else:
+            st.info(f"✅ {count}種類のアップグレードが有効")
+
     with st.expander("💸 負債ペナルティ", expanded=False):
         st.session_state.game_config["debt_penalty_multiplier"] = st.number_input(
             "負債ペナルティ倍率",
@@ -464,6 +506,7 @@ with st.sidebar:
     # 現在の設定を表示
     with st.expander("📋 現在の設定値", expanded=False):
         config = st.session_state.game_config
+        enabled_count = len(config.get("enabled_upgrades", ALL_UPGRADES))
         st.markdown(f"""
         - **初期金貨**: {config['start_gold']}G
         - **初期ワーカー**: {config['initial_workers']}人
@@ -472,6 +515,7 @@ with st.sidebar:
         - **4位救済**: +{config['rescue_gold_for_4th']}G
         - **負債ペナルティ**: -{config['debt_penalty_multiplier']}VP/金{' (上限' + str(config['debt_penalty_cap']) + 'VP)' if config['debt_penalty_cap'] else ''}
         - **金貨→VP**: {config['gold_to_vp_rate']}G = 1VP
+        - **有効アップグレード**: {enabled_count}種類
         """)
 
     st.caption("※設定変更は次のNew Game開始時に反映されます")
@@ -486,6 +530,10 @@ def init_game():
     # 設定をGameConfigオブジェクトに変換
     if "game_config" in st.session_state:
         cfg = st.session_state.game_config
+        # enabled_upgradesが空の場合はNone（エラー防止）
+        enabled = cfg.get("enabled_upgrades")
+        if enabled is not None and len(enabled) == 0:
+            enabled = None
         config = GameConfig(
             start_gold=cfg["start_gold"],
             initial_workers=cfg["initial_workers"],
@@ -495,6 +543,7 @@ def init_game():
             gold_to_vp_rate=cfg["gold_to_vp_rate"],
             take_gold_instead=cfg["take_gold_instead"],
             rescue_gold_for_4th=cfg["rescue_gold_for_4th"],
+            enabled_upgrades=enabled,
         )
     else:
         config = GameConfig()
