@@ -2193,6 +2193,27 @@ def run_single_game_quiet(
                 p.basic_workers_total += p.basic_workers_new_hires
                 p.basic_workers_new_hires = 0
 
+    # Grace threshold bonus (テストモード時)
+    grace_stats = []
+    if GRACE_TEST_MODE:
+        for p in players:
+            threshold_bonus = 0
+            threshold_reached = 0
+            for threshold, bonus in GRACE_THRESHOLD_BONUS:
+                if p.grace_points >= threshold:
+                    threshold_bonus = bonus
+                    threshold_reached = threshold
+                    break
+            p.vp += threshold_bonus
+            grace_stats.append({
+                "name": p.name,
+                "grace_points": p.grace_points,
+                "threshold_reached": threshold_reached,
+                "threshold_bonus": threshold_bonus,
+                "has_ritual": p.has_ritual,
+                "has_blessing_witch": "WITCH_BLESSING" in p.witches,
+            })
+
     # Gold to VP conversion at end
     for p in players:
         # WITCH_TREASUREがあれば1:1変換
@@ -2210,6 +2231,7 @@ def run_single_game_quiet(
         "vps": vps,
         "vp_diff_1st_2nd": vps[0] - vps[1],
         "vp_diff_1st_last": vps[0] - vps[-1],
+        "grace_stats": grace_stats,
     }
 
 
@@ -2687,12 +2709,102 @@ def run_all_debt_penalty_simulations():
     print(f"  - 負債発生率: {best['debt_rate']*100:.0f}%")
 
 
+def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
+    """Run simulation to analyze grace point system statistics."""
+    all_grace_points = []
+    threshold_counts = {0: 0, 5: 0, 10: 0, 15: 0}  # 閾値到達回数
+    ritual_count = 0
+    blessing_witch_count = 0
+    total_players = 0
+
+    for game_id in range(num_games):
+        seed = game_id * 1000
+        result = run_single_game_quiet(seed, max_rank=6)
+
+        for gs in result.get("grace_stats", []):
+            all_grace_points.append(gs["grace_points"])
+            threshold_counts[gs["threshold_reached"]] += 1
+            if gs["has_ritual"]:
+                ritual_count += 1
+            if gs["has_blessing_witch"]:
+                blessing_witch_count += 1
+            total_players += 1
+
+    if not all_grace_points:
+        return {"error": "Grace test mode is disabled"}
+
+    avg_grace = sum(all_grace_points) / len(all_grace_points)
+    max_grace = max(all_grace_points)
+    min_grace = min(all_grace_points)
+
+    # 恩寵の分布
+    dist = {}
+    for g in all_grace_points:
+        bucket = (g // 3) * 3  # 3点刻みでバケット化
+        dist[bucket] = dist.get(bucket, 0) + 1
+
+    return {
+        "num_games": num_games,
+        "total_players": total_players,
+        "avg_grace": avg_grace,
+        "max_grace": max_grace,
+        "min_grace": min_grace,
+        "threshold_counts": threshold_counts,
+        "ritual_rate": ritual_count / total_players if total_players else 0,
+        "blessing_witch_rate": blessing_witch_count / total_players if total_players else 0,
+        "distribution": dist,
+    }
+
+
+def run_all_grace_simulations():
+    """Run grace point system analysis."""
+    print("=== 恩寵ポイントシステム分析 ===")
+    print(f"100ゲーム実行中...\n")
+
+    result = run_grace_simulation(num_games=100)
+
+    if "error" in result:
+        print(f"エラー: {result['error']}")
+        return
+
+    print("=" * 60)
+    print("=== 恩寵統計 ===")
+    print("=" * 60)
+
+    print(f"\n【基本統計】")
+    print(f"  平均恩寵: {result['avg_grace']:.2f}点")
+    print(f"  最大恩寵: {result['max_grace']}点")
+    print(f"  最小恩寵: {result['min_grace']}点")
+
+    print(f"\n【閾値到達率】(全{result['total_players']}プレイヤー)")
+    tc = result['threshold_counts']
+    total = result['total_players']
+    print(f"  15点以上 (+8VP): {tc[15]:3d}回 ({tc[15]/total*100:5.1f}%)")
+    print(f"  10点以上 (+5VP): {tc[10]:3d}回 ({tc[10]/total*100:5.1f}%)")
+    print(f"   5点以上 (+2VP): {tc[5]:3d}回 ({tc[5]/total*100:5.1f}%)")
+    print(f"   未到達   (+0VP): {tc[0]:3d}回 ({tc[0]/total*100:5.1f}%)")
+
+    print(f"\n【獲得手段の取得率】")
+    print(f"  儀式アップグレード: {result['ritual_rate']*100:.1f}%")
+    print(f"  祝福の魔女:         {result['blessing_witch_rate']*100:.1f}%")
+
+    print(f"\n【恩寵ポイント分布】")
+    dist = result['distribution']
+    for bucket in sorted(dist.keys()):
+        count = dist[bucket]
+        bar = "█" * (count // 5)
+        print(f"  {bucket:2d}-{bucket+2:2d}点: {count:3d} {bar}")
+
+    print("\n" + "=" * 60)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="魔女協会 Card Game")
     parser.add_argument("--simulate", action="store_true", help="Run rank optimization simulation")
     parser.add_argument("--simulate-deck", action="store_true", help="Run deck/trump count optimization simulation")
     parser.add_argument("--simulate-debt-penalty", action="store_true", help="Run debt penalty optimization simulation")
+    parser.add_argument("--simulate-grace", action="store_true", help="Run grace point system simulation")
     args = parser.parse_args()
 
     try:
@@ -2702,6 +2814,8 @@ if __name__ == "__main__":
             run_all_deck_simulations()
         elif args.simulate_debt_penalty:
             run_all_debt_penalty_simulations()
+        elif args.simulate_grace:
+            run_all_grace_simulations()
         else:
             main()
     except KeyboardInterrupt:
