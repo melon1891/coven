@@ -59,7 +59,7 @@ DEBT_PENALTY_CAP: Optional[int] = None
 GRACE_TEST_MODE = True  # テストモードON/OFF
 # 閾値ボーナス（累計ではなく、到達した最高の閾値のみ適用）
 GRACE_THRESHOLD_BONUS = [
-    (15, 8),   # 15点以上 → +8VP
+    (13, 8),   # 13点以上 → +8VP
     (10, 5),   # 10点以上 → +5VP
     (5, 2),    # 5点以上 → +2VP
 ]
