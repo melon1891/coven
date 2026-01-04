@@ -475,7 +475,7 @@ ALL_WITCHES = [
     "WITCH_BLOODHUNT",   # 討伐強化: HUNTで+1VP
     "WITCH_HERD",        # 雇用支援: 雇用ラウンド給料-1
     "WITCH_TREASURE",    # 金貨変換: ゲーム終了時1金→1恩寵
-    "WITCH_BLESSING",    # 祈り強化: PRAYで+1恩寵
+    "WITCH_BLESSING",    # 恩寵獲得: 毎ラウンド+1恩寵
     "WITCH_PROPHET",     # 的中の魔女: 宣言成功時+1金
     "WITCH_ZERO_MASTER", # 慎重な予言者: 宣言0成功時+2恩寵（通常+1）
 ]
@@ -605,7 +605,7 @@ def upgrade_description(u: str) -> str:
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
         "WITCH_TREASURE": "【効果】ゲーム終了時、1金貨につき1恩寵に変換可能",
-        "WITCH_BLESSING": "【効果】PRAYを行うたび、追加で+1恩寵",
+        "WITCH_BLESSING": "【効果】毎ラウンド終了時、+1恩寵",
         "WITCH_PROPHET": "【効果】宣言成功時、追加で+1金",
         "WITCH_ZERO_MASTER": "【効果】宣言0成功時、+2恩寵（通常+1の代わり）",
     }
@@ -639,10 +639,10 @@ WITCH_FLAVOR = {
 富を捧げることで、神の加護を得る。""",
 
     "WITCH_BLESSING": """《祈祷の魔女》
-役割：祈り強化・恩寵獲得
+役割：恩寵獲得
 
-彼女の祈りは、誰よりも深く協会に届く。
-祈る者に力を与え、恩寵の道を開く。""",
+協会への忠誠を示す者に、彼女は静かに恩寵を与える。
+毎ラウンド終了時、その祝福は確実に訪れる。""",
 
     "WITCH_PROPHET": """《的中の魔女》
 役割：予言・トリック宣言強化
@@ -1507,10 +1507,6 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
             # 祈りアクション: ワーカー配置で恩寵獲得
             if GRACE_ENABLED:
                 pray_gain = player.pray_yield()
-                # WITCH_BLESSING: PRAYで+1恩寵
-                if "WITCH_BLESSING" in player.witches:
-                    pray_gain += 1
-                    witch_bonuses.append("祈祷の魔女: +1恩寵")
                 player.grace_points += pray_gain
                 grace_bonuses.append(f"祈り(Lv{player.pray_level}): +{pray_gain}恩寵")
         elif a == "DONATE":
@@ -1812,6 +1808,17 @@ def main():
                     "workers_after": p.basic_workers_total,
                     "activated": activated,
                 })
+
+        # WITCH_BLESSING: 毎ラウンド終了時+1恩寵
+        if GRACE_ENABLED:
+            for p in players:
+                if "WITCH_BLESSING" in p.witches:
+                    p.grace_points += 1
+                    logger.log("witch_blessing_grace", {
+                        "round": round_no + 1,
+                        "player": p.name,
+                        "grace_gained": 1,
+                    })
 
         logger.log("round_end", {"round": round_no + 1, "players": snapshot_players(players)})
 
@@ -2214,6 +2221,13 @@ class GameEngine:
                 if p.basic_workers_new_hires > 0:
                     p.basic_workers_total += p.basic_workers_new_hires
                     p.basic_workers_new_hires = 0
+
+            # WITCH_BLESSING: 毎ラウンド終了時+1恩寵
+            if GRACE_ENABLED:
+                for p in self.players:
+                    if "WITCH_BLESSING" in p.witches:
+                        p.grace_points += 1
+                        self._log(f"{p.name}: 《祈祷の魔女》+1恩寵")
 
             self.round_no += 1
             self.phase = "round_start"
