@@ -1827,7 +1827,7 @@ class GameEngine:
             p.gold = self.config.start_gold
             p.basic_workers_total = self.config.initial_workers
 
-        deal_fixed_sets(self.players, seed=self.deal_seed, logger=None)
+        # カードはラウンド開始時にdeal_round_cardsで配る（deal_fixed_setsはデッキ枚数不足のため使用しない）
 
         # アップグレードデッキを初期化
         self.upgrade_deck = UpgradeDeck(self.rng, self.config.enabled_upgrades)
@@ -1845,6 +1845,7 @@ class GameEngine:
         self.full_hands: Dict[str, List[Card]] = {}
         self.playable_hands: Dict[str, List[Card]] = {}
         self.sealed_by_player: Dict[str, List[Card]] = {}
+        self.remaining_deck: List[Card] = []  # ラウンド配札後の残りデッキ
         self.current_trick = 0
         self.trick_plays: List[Tuple[Player, Card]] = []
         self.lead_card: Optional[Card] = None
@@ -1979,7 +1980,11 @@ class GameEngine:
                 p.tricks_won_this_round = 0
                 p.ritual_used_this_round = False
 
-            self.full_hands = {p.name: p.sets[self.set_index][:] for p in self.players}
+            # ラウンドごとにカードを配る（デッキをリシャッフル）
+            round_hands, self.remaining_deck = deal_round_cards(
+                self.players, self.round_no, self.rng, None
+            )
+            self.full_hands = {p.name: round_hands[p.name][:] for p in self.players}
             self.playable_hands = {}
             self.sealed_by_player = {}
             self.trick_history = []  # Clear trick history for new round
