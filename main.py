@@ -1972,7 +1972,7 @@ def main():
 @dataclass
 class InputRequest:
     """Represents a request for human input."""
-    type: str  # "declaration", "seal", "choose_card", "upgrade", "worker_actions"
+    type: str  # "declaration", "grace_hand_swap", "seal", "choose_card", "upgrade", "fourth_place_bonus", "worker_actions"
     player: Player
     context: Dict[str, Any]
 
@@ -2100,6 +2100,32 @@ class GameEngine:
                 self._log(f"{player.name} 獲得: {upgrade_name(response)}")
             self._pending_input = None
 
+        elif req_type == "fourth_place_bonus":
+            # response is "GOLD" or "GRACE"
+            if response == "GOLD":
+                player.gold += self.config.rescue_gold_for_4th
+                self._log(f"救済: {player.name} +{self.config.rescue_gold_for_4th} 金貨")
+            else:  # GRACE
+                player.grace_points += GRACE_4TH_PLACE_BONUS
+                self._log(f"救済: {player.name} +{GRACE_4TH_PLACE_BONUS} 恩寵")
+            self._pending_input = None
+            # Move to worker_placement phase
+            self.phase = "worker_placement"
+            self.wp_player_index = 0
+
+        elif req_type == "grace_hand_swap":
+            # response is Card to swap out, or None to skip
+            if response is not None:
+                hand = self.full_hands[player.name]
+                player.grace_points -= GRACE_HAND_SWAP_COST
+                hand.remove(response)
+                new_card = self.remaining_deck.pop(0)
+                hand.append(new_card)
+                self.remaining_deck.append(response)
+                self.rng.shuffle(self.remaining_deck)
+                self._log(f"{player.name} 手札交換: {response} → {new_card}")
+            self._pending_input = None
+
         elif req_type == "worker_actions":
             # response can be list of actions or dict with additional options
             if isinstance(response, dict):
@@ -2175,6 +2201,55 @@ class GameEngine:
                 return True
 
             if self.sub_phase >= len(self.players):
+                self.phase = "grace_hand_swap"
+                self.sub_phase = 0
+            return True
+
+        # Phase: grace_hand_swap (before seal)
+        if self.phase == "grace_hand_swap":
+            if not GRACE_ENABLED or len(self.remaining_deck) == 0:
+                # 恩寵無効またはデッキが空なら即座にsealフェーズへ
+                self.phase = "seal"
+                self.sub_phase = 0
+                return True
+
+            player = self.players[self.sub_phase]
+            hand = self.full_hands[player.name]
+
+            if player.is_bot:
+                # ボットの手札交換ロジック（grace_hand_swap関数と同等）
+                if player.grace_points >= GRACE_HAND_SWAP_COST:
+                    non_trump = [c for c in hand if not c.is_trump()]
+                    if non_trump:
+                        worst_card = min(non_trump, key=lambda c: c.rank)
+                        # ランクが5以下で、恩寵が2以上ある場合のみ交換
+                        if worst_card.rank <= 5 and player.grace_points >= 2:
+                            player.grace_points -= GRACE_HAND_SWAP_COST
+                            hand.remove(worst_card)
+                            new_card = self.remaining_deck.pop(0)
+                            hand.append(new_card)
+                            self.remaining_deck.append(worst_card)
+                            self.rng.shuffle(self.remaining_deck)
+                            self._log(f"{player.name} 手札交換: {worst_card} → {new_card}")
+                self.sub_phase += 1
+            else:
+                # 人間プレイヤー: 恩寵があれば交換の機会を与える
+                if player.grace_points >= GRACE_HAND_SWAP_COST and len(self.remaining_deck) > 0:
+                    self._pending_input = InputRequest(
+                        type="grace_hand_swap",
+                        player=player,
+                        context={
+                            "hand": hand[:],
+                            "grace_points": player.grace_points,
+                            "cost": GRACE_HAND_SWAP_COST,
+                        }
+                    )
+                    self.sub_phase += 1
+                    return True
+                else:
+                    self.sub_phase += 1
+
+            if self.sub_phase >= len(self.players):
                 self.phase = "seal"
                 self.sub_phase = 0
             return True
@@ -2221,13 +2296,8 @@ class GameEngine:
                     self.upgrade_deck.discard_remaining(self.revealed_upgrades)
                     self.revealed_upgrades = []
 
-                # Give 4th place rescue gold
-                fourth = self.ranked_players[-1]
-                rescue_gold = self.config.rescue_gold_for_4th
-                fourth.gold += rescue_gold
-                self._log(f"救済: {fourth.name} +{rescue_gold} 金貨")
-                self.phase = "worker_placement"
-                self.wp_player_index = 0
+                # Move to fourth_place_bonus phase
+                self.phase = "fourth_place_bonus"
                 return True
 
             player = self.ranked_players[self.upgrade_pick_index]
@@ -2255,6 +2325,57 @@ class GameEngine:
                 )
                 self.upgrade_pick_index += 1
                 return True
+            return True
+
+        # Phase: fourth_place_bonus
+        if self.phase == "fourth_place_bonus":
+            fourth = self.ranked_players[-1]
+
+            if fourth.is_bot:
+                # ボットのロジック（CLIと同じ）
+                strat = STRATEGIES.get(fourth.strategy, STRATEGIES['BALANCED'])
+                chose_grace = False
+
+                # 恩寵特化は常に恩寵を選択
+                if GRACE_ENABLED and strat.get('prefer_grace', False):
+                    fourth.grace_points += GRACE_4TH_PLACE_BONUS
+                    self._log(f"救済: {fourth.name} +{GRACE_4TH_PLACE_BONUS} 恩寵")
+                    chose_grace = True
+                elif GRACE_ENABLED:
+                    # 恩寵閾値に近い場合は恩寵を選択
+                    for threshold, bonus in GRACE_THRESHOLD_BONUS:
+                        diff = threshold - fourth.grace_points
+                        if 0 < diff <= 2:  # 閾値まであと2点以内
+                            fourth.grace_points += GRACE_4TH_PLACE_BONUS
+                            self._log(f"救済: {fourth.name} +{GRACE_4TH_PLACE_BONUS} 恩寵")
+                            chose_grace = True
+                            break
+
+                if not chose_grace:
+                    # 金貨を選択
+                    fourth.gold += self.config.rescue_gold_for_4th
+                    self._log(f"救済: {fourth.name} +{self.config.rescue_gold_for_4th} 金貨")
+
+                self.phase = "worker_placement"
+                self.wp_player_index = 0
+            else:
+                # 人間プレイヤー
+                if GRACE_ENABLED:
+                    self._pending_input = InputRequest(
+                        type="fourth_place_bonus",
+                        player=fourth,
+                        context={
+                            "gold_amount": self.config.rescue_gold_for_4th,
+                            "grace_amount": GRACE_4TH_PLACE_BONUS,
+                        }
+                    )
+                    return True
+                else:
+                    # 恩寵無効時は金貨のみ
+                    fourth.gold += self.config.rescue_gold_for_4th
+                    self._log(f"救済: {fourth.name} +{self.config.rescue_gold_for_4th} 金貨")
+                    self.phase = "worker_placement"
+                    self.wp_player_index = 0
             return True
 
         # Phase: worker_placement
