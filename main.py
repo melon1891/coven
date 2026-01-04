@@ -2229,6 +2229,24 @@ class GameEngine:
 
     def _finish_game(self):
         """Finalize game and determine winner."""
+        # 恩寵ポイント閾値ボーナス（ゲーム終了時）
+        if GRACE_ENABLED:
+            self._log("--- 恩寵ポイント閾値ボーナス ---")
+            for p in self.players:
+                # 最高の閾値のみ適用（累計ではない）
+                threshold_bonus = 0
+                threshold_reached = 0
+                for threshold, bonus in GRACE_THRESHOLD_BONUS:
+                    if p.grace_points >= threshold:
+                        threshold_bonus = bonus
+                        threshold_reached = threshold
+                        break
+                if threshold_bonus > 0:
+                    p.vp += threshold_bonus
+                    self._log(f"{p.name}: 恩寵{p.grace_points}点 ({threshold_reached}+到達) → +{threshold_bonus}VP")
+                else:
+                    self._log(f"{p.name}: 恩寵{p.grace_points}点 (閾値未到達)")
+
         # 金貨→VP変換
         gold_to_vp_rate = self.config.gold_to_vp_rate
         self._log("--- 金貨→VP変換 ---")
