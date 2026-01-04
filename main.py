@@ -37,7 +37,7 @@ REVEAL_UPGRADES = 5                # players + 1 (for 4p => 5)
 NUM_DECKS = 2                      # 2デッキ = 48カード (6ランク×4スート×2)
 TRUMP_COUNT = 4                    # 切り札4枚
 
-START_GOLD = 7
+START_GOLD = 5
 WAGE_CURVE = [1, 1, 2, 2, 2, 3]  # 初期ワーカーの給料（6ラウンド対応）
 # アップグレードワーカーは取得時2金支払い、以後給料なし
 UPGRADE_WORKER_COST = 2  # 取得時コスト
