@@ -924,6 +924,57 @@ if pending is not None:
                 run_until_input()
                 st.rerun()
 
+    elif req_type == "fourth_place_bonus":
+        st.subheader(f"🎁 4位ボーナス")
+        gold_amount = context["gold_amount"]
+        grace_amount = context["grace_amount"]
+
+        st.info("4位救済ボーナスを選んでください")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(f"💰 {gold_amount} 金貨", type="primary", use_container_width=True):
+                game.provide_input("GOLD")
+                run_until_input()
+                st.rerun()
+        with col2:
+            if st.button(f"✨ {grace_amount} 恩寵", type="secondary", use_container_width=True):
+                game.provide_input("GRACE")
+                run_until_input()
+                st.rerun()
+
+    elif req_type == "grace_hand_swap":
+        st.subheader(f"🔄 手札交換")
+        hand = context["hand"]
+        grace_points = context["grace_points"]
+        cost = context["cost"]
+
+        st.info(f"恩寵を{cost}消費して手札1枚を交換できます（現在の恩寵: {grace_points}）")
+
+        # 手札表示
+        st.write("交換するカードを選択:")
+        num_cards = len(hand)
+        cols_per_row = 3
+        rows = (num_cards + cols_per_row - 1) // cols_per_row
+        for row in range(rows):
+            cols = st.columns(cols_per_row)
+            for col in range(cols_per_row):
+                idx = row * cols_per_row + col
+                if idx < num_cards:
+                    card = hand[idx]
+                    with cols[col]:
+                        display_str = card_display(card)
+                        if st.button(display_str, key=f"swap_{idx}", use_container_width=True):
+                            game.provide_input(card)
+                            run_until_input()
+                            st.rerun()
+
+        st.divider()
+        if st.button("⏭️ スキップ", use_container_width=True):
+            game.provide_input(None)
+            run_until_input()
+            st.rerun()
+
     elif req_type == "worker_actions":
         st.subheader(f"👷 ワーカー配置")
         num_workers = context["num_workers"]
