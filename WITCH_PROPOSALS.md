@@ -7,7 +7,7 @@
 | 1 | WITCH_BLACKROAD | 《黒路の魔女》 | TRADEを行うたび+2金 |
 | 2 | WITCH_BLOODHUNT | 《血誓の討伐官》 | HUNTを行うたび+1VP |
 | 3 | WITCH_HERD | 《群導の魔女》 | 雇用ラウンド給料-1 |
-| 4 | WITCH_TREASURE | 《財宝変換の魔女》 | ゲーム終了時1金→1VP |
+| 4 | WITCH_TREASURE | 《財宝変換の魔女》 | ゲーム終了時1金→1恩寵 |
 | 5 | WITCH_BLESSING | 《祈祷の魔女》 | PRAYを行うたび+1恩寵 |
 
 ---
