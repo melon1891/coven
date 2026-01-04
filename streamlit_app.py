@@ -10,7 +10,7 @@ import random
 from main import (
     GameEngine, GameConfig, Card, ROUNDS, TRICKS_PER_ROUND, CARDS_PER_SET,
     ACTIONS, TAKE_GOLD_INSTEAD, upgrade_name, upgrade_description, legal_cards,
-    WAGE_CURVE, UPGRADED_WAGE_CURVE, STRATEGIES,
+    WAGE_CURVE, UPGRADE_WORKER_COST, STRATEGIES,
     START_GOLD, INITIAL_WORKERS, DECLARATION_BONUS_VP,
     DEBT_PENALTY_MULTIPLIER, DEBT_PENALTY_CAP, GOLD_TO_VP_RATE, RESCUE_GOLD_FOR_4TH,
     ALL_UPGRADES, DEFAULT_ENABLED_UPGRADES,
@@ -641,7 +641,7 @@ for row in range(2):
             # ワーカーと給料を1行に
             round_no = state["round_no"]
             if round_no < len(WAGE_CURVE):
-                st.caption(f"👷 {p['workers']}人 (給料: 初期{WAGE_CURVE[round_no]}G / 雇用{UPGRADED_WAGE_CURVE[round_no]}G)")
+                st.caption(f"👷 {p['workers']}人 (給料: 初期{WAGE_CURVE[round_no]}G / 雇用なし)")
             else:
                 st.caption(f"👷 {p['workers']}人")
             # 交易・討伐レベルをコンパクトに
