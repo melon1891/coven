@@ -8,7 +8,7 @@
 | 2 | WITCH_BLOODHUNT | 《血誓の討伐官》 | HUNTを行うたび+1VP |
 | 3 | WITCH_HERD | 《群導の魔女》 | 雇用ラウンド給料-1 |
 | 4 | WITCH_TREASURE | 《財宝変換の魔女》 | ゲーム終了時1金→1恩寵 |
-| 5 | WITCH_BLESSING | 《祈祷の魔女》 | PRAYを行うたび+1恩寵 |
+| 5 | WITCH_BLESSING | 《祈祷の魔女》 | 毎ラウンド終了時+1恩寵 |
 | 6 | WITCH_PROPHET | 《的中の魔女》 | 宣言成功時+1金 |
 | 7 | WITCH_ZERO_MASTER | 《慎重な予言者》 | 宣言0成功時+2恩寵（通常+1の代わり） |
 
