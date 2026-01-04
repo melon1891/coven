@@ -55,8 +55,9 @@ DEBT_PENALTY_MULTIPLIER = 2
 # ペナルティ上限（None = 無制限）
 DEBT_PENALTY_CAP: Optional[int] = None
 
-# === 恩寵ポイントシステム（テストモード） ===
-GRACE_TEST_MODE = True  # テストモードON/OFF
+# === 恩寵ポイントシステム ===
+# 恩寵機能のON/OFF設定（Falseにすると恩寵なしの旧バージョン動作に戻る）
+GRACE_ENABLED = True
 # 閾値ボーナス（累計ではなく、到達した最高の閾値のみ適用）
 GRACE_THRESHOLD_BONUS = [
     (13, 8),   # 13点以上 → +8VP
@@ -283,7 +284,7 @@ class Player:
     # Witch ability usage this round
     ritual_used_this_round: bool = False  # WITCH_RITUAL: アクション再実行
 
-    # Grace points (恩寵ポイント) - テストモード用
+    # Grace points (恩寵ポイント)
     grace_points: int = 0
 
     # Trick-taking round state
@@ -355,8 +356,8 @@ def prompt_choice(prompt: str, choices: List[str], default: Optional[str] = None
 def print_state(players: List[Player], round_no: int) -> None:
     print("\n" + "=" * 72)
     print(f"ROUND {round_no+1}/{ROUNDS} STATE")
-    if GRACE_TEST_MODE:
-        print("[恩寵テストモード ON]")
+    if GRACE_ENABLED:
+        print("[恩寵システム ON]")
     print("-" * 72)
     for p in players:
         base_info = (
@@ -366,7 +367,7 @@ def print_state(players: List[Player], round_no: int) -> None:
             f"HuntY={p.hunt_yield()}(Lv{p.hunt_level}) "
             f"Witches={p.permanent_witch_count()}"
         )
-        if GRACE_TEST_MODE:
+        if GRACE_ENABLED:
             base_info += f" Grace={p.grace_points}"
         print(base_info)
     print("=" * 72)
@@ -458,7 +459,7 @@ ALL_UPGRADES = [
     "UP_HUNT",
     "RECRUIT_INSTANT",
     "RECRUIT_WAGE_DISCOUNT",
-    "UP_RITUAL",  # 儀式: 金貨を恩寵に変換（テストモード用）
+    "UP_RITUAL",  # 儀式強化: 恩寵獲得量+1
 ]
 
 # 魔女カード（ラウンド3のみ登場）
@@ -469,7 +470,7 @@ ALL_WITCHES = [
     "WITCH_RITUAL",
     "WITCH_BARRIER",
     "WITCH_TREASURE",  # 新魔女: ゲーム終了時1金→1VP変換
-    "WITCH_BLESSING",  # 祝福の魔女: 毎ラウンド終了時に恩寵+1（テストモード用）
+    "WITCH_BLESSING",  # 祝福の魔女: 毎ラウンド終了時に恩寵+1
 ]
 
 # デフォルトで有効なアップグレード（魔女を除く）
@@ -484,7 +485,7 @@ UPGRADE_POOL_COUNTS = {
     "UP_HUNT": 6,
     "RECRUIT_INSTANT": 2,
     "RECRUIT_WAGE_DISCOUNT": 2,
-    "UP_RITUAL": 2,  # 儀式（テストモード用）
+    "UP_RITUAL": 2,  # 儀式強化
 }
 
 # 魔女カードのプール内の枚数
@@ -495,7 +496,7 @@ WITCH_POOL_COUNTS = {
     "WITCH_RITUAL": 1,
     "WITCH_BARRIER": 1,
     "WITCH_TREASURE": 1,
-    "WITCH_BLESSING": 1,  # 祝福の魔女（テストモード用）
+    "WITCH_BLESSING": 1,  # 祝福の魔女
 }
 
 
@@ -651,8 +652,8 @@ def can_take_upgrade(player: Player, u: str) -> bool:
     if u == "UP_HUNT":
         return player.hunt_level < 2
     if u == "UP_RITUAL":
-        # 儀式はテストモードのみ、かつレベル2未満の場合のみ取得可能
-        return GRACE_TEST_MODE and player.ritual_level < 2
+        # 儀式強化は恩寵システム有効時のみ、かつレベル2未満の場合のみ取得可能
+        return GRACE_ENABLED and player.ritual_level < 2
     return True
 
 
@@ -699,7 +700,7 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
 
         # 恩寵閾値への近さをチェック（全性格共通）
         grace_near_threshold = False
-        if GRACE_TEST_MODE:
+        if GRACE_ENABLED:
             for threshold, _ in GRACE_THRESHOLD_BONUS:
                 diff = threshold - player.grace_points
                 if 0 < diff <= 3:  # 閾値まであと3点以内
@@ -804,7 +805,7 @@ def choose_4th_place_bonus(player: Player, logger: Optional[JsonlLogger] = None,
     恩寵システムが無効の場合は自動的に金貨を獲得。
     Returns: "GOLD" or "GRACE"
     """
-    if not GRACE_TEST_MODE:
+    if not GRACE_ENABLED:
         # 恩寵システム無効時は金貨のみ
         player.gold += RESCUE_GOLD_FOR_4TH
         return "GOLD"
@@ -889,7 +890,7 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
 
             # 恩寵システム: 宣言0成功で恩寵ボーナス
             grace_bonus = 0
-            if GRACE_TEST_MODE and p.declared_tricks == 0:
+            if GRACE_ENABLED and p.declared_tricks == 0:
                 grace_bonus = GRACE_DECLARATION_ZERO_BONUS
                 p.grace_points += grace_bonus
                 print(f"  (宣言0成功ボーナス: +{grace_bonus} 恩寵)")
@@ -907,7 +908,7 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
                 })
 
     # 恩寵システム: トリテ0勝で恩寵ボーナス（宣言0成功とは別）
-    if GRACE_TEST_MODE:
+    if GRACE_ENABLED:
         for p in players:
             if p.tricks_won_this_round == 0:
                 p.grace_points += GRACE_ZERO_TRICKS_BONUS
@@ -934,7 +935,7 @@ def grace_hand_swap(
     シール前に使用可能。1恩寵 = 1枚交換。
     Returns True if swap was performed.
     """
-    if not GRACE_TEST_MODE:
+    if not GRACE_ENABLED:
         return False
     if player.grace_points < GRACE_HAND_SWAP_COST:
         return False
@@ -1195,7 +1196,7 @@ def run_trick_taking(
     print("宣言一覧:", ", ".join(f"{p.name}:{p.declared_tricks}" for p in players))
 
     # 恩寵消費: シール前に手札交換
-    if GRACE_TEST_MODE and remaining_deck:
+    if GRACE_ENABLED and remaining_deck:
         print("\n--- 恩寵消費フェーズ (手札交換) ---")
         for p in players:
             if p.grace_points >= GRACE_HAND_SWAP_COST:
@@ -1326,7 +1327,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
 
         # 恩寵閾値への近さをチェック
         grace_near_threshold = False
-        if GRACE_TEST_MODE:
+        if GRACE_ENABLED:
             for threshold, _ in GRACE_THRESHOLD_BONUS:
                 diff = threshold - player.grace_points
                 if 0 < diff <= 4:  # 閾値まであと4点以内
@@ -1335,7 +1336,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
 
         for _ in range(n):
             # 恩寵特化: 儀式を積極的に選択
-            if (GRACE_TEST_MODE and
+            if (GRACE_ENABLED and
                 strat.get('prefer_grace', False) and
                 current_gold >= GRACE_RITUAL_GOLD_COST + max(0, expected_wage - 2)):
                 actions.append("RITUAL")
@@ -1343,7 +1344,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                 continue
 
             # 全性格共通: 閾値に近い場合、grace_awarenessに応じて儀式を選択
-            if (GRACE_TEST_MODE and
+            if (GRACE_ENABLED and
                 grace_near_threshold and
                 current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
                 player.rng.random() < grace_awareness * 0.6):  # grace_awareness×60%で儀式
@@ -1352,7 +1353,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                 continue
 
             # ボットの儀式選択: 金貨に余裕があり、一定確率で選択
-            if (GRACE_TEST_MODE and
+            if (GRACE_ENABLED and
                 current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
                 player.rng.random() < grace_awareness * 0.3):  # grace_awareness×30%で儀式
                 actions.append("RITUAL")
@@ -1393,7 +1394,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
         return actions
 
     print(f"\n{player.name} {n}人の見習いにアクションを割り当てます。")
-    if GRACE_TEST_MODE:
+    if GRACE_ENABLED:
         print(f"  (儀式アクション: {GRACE_RITUAL_GOLD_COST}金→{player.ritual_yield()}恩寵 [Lv{player.ritual_level}])")
     for i in range(n):
         a = prompt_choice(f" ワーカー{i+1}のアクション", available_actions, default="TRADE")
@@ -1429,8 +1430,8 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
         elif a == "RECRUIT":
             player.basic_workers_new_hires += 1
         elif a == "RITUAL":
-            # 儀式アクション: 金貨を恩寵に変換（テストモード用、全員使用可能）
-            if GRACE_TEST_MODE:
+            # 儀式アクション: 金貨を恩寵に変換
+            if GRACE_ENABLED:
                 if player.gold >= GRACE_RITUAL_GOLD_COST:
                     ritual_gain = player.ritual_yield()
                     player.gold -= GRACE_RITUAL_GOLD_COST
@@ -1725,7 +1726,7 @@ def main():
                 })
 
         # WITCH_BLESSING: 毎ラウンド終了時に恩寵+1
-        if GRACE_TEST_MODE:
+        if GRACE_ENABLED:
             for p in players:
                 if "WITCH_BLESSING" in p.witches:
                     p.grace_points += 1
@@ -1739,7 +1740,7 @@ def main():
         logger.log("round_end", {"round": round_no + 1, "players": snapshot_players(players)})
 
     # 恩寵ポイント閾値ボーナス（ゲーム終了時）
-    if GRACE_TEST_MODE:
+    if GRACE_ENABLED:
         print("\n--- 恩寵ポイント閾値ボーナス ---")
         for p in players:
             # 最高の閾値のみ適用（累計ではない）
@@ -1786,7 +1787,7 @@ def main():
 
     print("\n=== ゲーム終了 ===")
     for i, p in enumerate(players_sorted, start=1):
-        grace_info = f" 恩寵={p.grace_points}" if GRACE_TEST_MODE else ""
+        grace_info = f" 恩寵={p.grace_points}" if GRACE_ENABLED else ""
         print(f"{i}. {p.name} VP={p.vp} 金貨={p.gold} ワーカー={p.basic_workers_total} "
               f"交易={p.trade_yield()}(Lv{p.trade_level}) 討伐={p.hunt_yield()}(Lv{p.hunt_level}) "
               f"魔女={p.permanent_witch_count()}{grace_info}")
@@ -2331,11 +2332,11 @@ def run_single_game_quiet(
             if p.tricks_won_this_round == p.declared_tricks:
                 p.vp += DECLARATION_BONUS_VP
                 # 宣言0成功で恩寵ボーナス
-                if GRACE_TEST_MODE and p.declared_tricks == 0:
+                if GRACE_ENABLED and p.declared_tricks == 0:
                     p.grace_points += GRACE_DECLARATION_ZERO_BONUS
 
         # 0トリックボーナス（宣言に関わらず0勝で恩寵獲得）
-        if GRACE_TEST_MODE:
+        if GRACE_ENABLED:
             for p in players:
                 if p.tricks_won_this_round == 0:
                     p.grace_points += GRACE_ZERO_TRICKS_BONUS
@@ -2367,7 +2368,7 @@ def run_single_game_quiet(
             pay_wages_and_debt(p, round_no)
 
         # WITCH_BLESSINGによる恩寵獲得
-        if GRACE_TEST_MODE:
+        if GRACE_ENABLED:
             for p in players:
                 if "WITCH_BLESSING" in p.witches:
                     p.grace_points += 1
@@ -2389,7 +2390,7 @@ def run_single_game_quiet(
 
     # Grace threshold bonus at game end
     grace_stats = {"points": [], "threshold_reached": [], "bonus_vp": []}
-    if GRACE_TEST_MODE:
+    if GRACE_ENABLED:
         for p in players:
             grace_stats["points"].append(p.grace_points)
             threshold_bonus = 0
