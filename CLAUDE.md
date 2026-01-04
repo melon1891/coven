@@ -58,6 +58,22 @@ UPGRADE_WORKER_COST = 2 # 雇用ワーカーの初期コスト
 WITCH_ROUND = 2         # 魔女が出現するラウンド（0-indexed、R3）
 ```
 
+### Grace System Constants (恩寵システム)
+
+```python
+GRACE_ENABLED = True              # 恩寵機能のON/OFF
+GRACE_THRESHOLD_BONUS = [         # 閾値ボーナス（最高のみ適用）
+    (13, 8),  # 13点以上 → +8VP
+    (10, 5),  # 10点以上 → +5VP
+]
+GRACE_HAND_SWAP_COST = 1          # 手札交換コスト
+GRACE_RITUAL_GOLD_COST = 3        # 儀式アクション消費金
+GRACE_RITUAL_GAIN = 2             # 儀式基礎獲得量（Lv0）
+GRACE_DECLARATION_ZERO_BONUS = 1  # 宣言0成功ボーナス
+GRACE_ZERO_TRICKS_BONUS = 1       # トリック0勝ボーナス
+GRACE_4TH_PLACE_BONUS = 1         # 4位救済ボーナス
+```
+
 ### Game Flow (per round)
 
 1. **Card Deal** - 5枚配布
