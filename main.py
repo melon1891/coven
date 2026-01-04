@@ -98,7 +98,7 @@ STRATEGIES = {
         'prefer_gold': True,
         'hunt_ratio': 0.2,
         'accept_debt': 0,
-        'grace_awareness': 0.3,  # 閾値近ければ恩寵も考慮
+        'grace_awareness': 0.5,  # 閾値近ければ恩寵も考慮（強化: 0.3→0.5）
     },
     'VP_AGGRESSIVE': {
         'name': 'VPつっぱ',
@@ -108,7 +108,7 @@ STRATEGIES = {
         'prefer_gold': False,
         'hunt_ratio': 0.8,
         'accept_debt': 99,
-        'grace_awareness': 0.4,  # 儀式・祝福魔女を時々取る
+        'grace_awareness': 0.6,  # 儀式・祝福魔女を時々取る（強化: 0.4→0.6）
     },
     'BALANCED': {
         'name': 'バランス',
@@ -118,7 +118,7 @@ STRATEGIES = {
         'prefer_gold': False,
         'hunt_ratio': 0.5,
         'accept_debt': 4,
-        'grace_awareness': 0.5,  # バランスよく恩寵も狙う
+        'grace_awareness': 0.7,  # バランスよく恩寵も狙う（強化: 0.5→0.7）
     },
     'DEBT_AVOID': {
         'name': '借金回避',
@@ -128,7 +128,7 @@ STRATEGIES = {
         'prefer_gold': False,
         'hunt_ratio': 0.4,
         'accept_debt': 1,
-        'grace_awareness': 0.4,  # 金貨不要の恩寵は取る
+        'grace_awareness': 0.6,  # 金貨不要の恩寵は取る（強化: 0.4→0.6）
     },
     'GRACE_FOCUSED': {
         'name': '恩寵特化',
@@ -1000,8 +1000,8 @@ def grace_hand_swap(
         if not non_trump:
             return False
         worst_card = min(non_trump, key=lambda c: c.rank)
-        # ランクが3以下で、恩寵が3以上ある場合のみ交換（簡易ヒューリスティック）
-        if worst_card.rank <= 3 and player.grace_points >= 3:
+        # ランクが5以下で、恩寵が2以上ある場合のみ交換（強化: 3以下→5以下、3以上→2以上）
+        if worst_card.rank <= 5 and player.grace_points >= 2:
             # 交換実行
             player.grace_points -= GRACE_HAND_SWAP_COST
             hand.remove(worst_card)
@@ -1320,11 +1320,11 @@ def run_trick_taking(
                     use_last_play = False
                     if p.is_bot:
                         # Bot decision: use if strategically beneficial
-                        # Use if: winning declaration is at risk, or grace is abundant (>=4)
+                        # Use if: winning declaration is at risk, or grace is abundant (>=3)
                         tricks_needed = p.declared_tricks - p.tricks_won_this_round
                         tricks_remaining = TRICKS_PER_ROUND - trick_idx
-                        if p.grace_points >= 4 and tricks_needed > 0 and tricks_remaining >= tricks_needed:
-                            use_last_play = p.rng.random() < 0.3  # 30% chance if conditions met
+                        if p.grace_points >= 3 and tricks_needed > 0 and tricks_remaining >= tricks_needed:
+                            use_last_play = p.rng.random() < 0.6  # 60% chance if conditions met（強化: 4以上30%→3以上60%）
                     else:
                         # Human player: ask
                         print(f"\n{p.name}: 後出し権を使用しますか？ (コスト: {GRACE_LAST_PLAY_COST}恩寵, 現在: {p.grace_points})")
@@ -1448,7 +1448,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
         if GRACE_ENABLED:
             for threshold, _ in GRACE_THRESHOLD_BONUS:
                 diff = threshold - player.grace_points
-                if 0 < diff <= 4:  # 閾値まであと4点以内
+                if 0 < diff <= 6:  # 閾値まであと6点以内（強化: 4→6）
                     grace_near_threshold = True
                     break
 
@@ -1472,28 +1472,28 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
 
             # 全性格共通: 閾値に近い場合、恩寵アクションを選択
             if GRACE_ENABLED and grace_near_threshold:
-                # 儀式が使えれば選択
-                if player.has_ritual and player.rng.random() < grace_awareness * 0.5:
+                # 儀式が使えれば選択（強化: 0.5→0.7）
+                if player.has_ritual and player.rng.random() < grace_awareness * 0.7:
                     actions.append("RITUAL")
                     continue
-                # 寄付が使えて金貨があれば選択
+                # 寄付が使えて金貨があれば選択（強化: 0.4→0.6）
                 if (player.has_donate and
                     current_gold >= GRACE_DONATE_COST + expected_wage and
-                    player.rng.random() < grace_awareness * 0.4):
+                    player.rng.random() < grace_awareness * 0.6):
                     actions.append("DONATE")
                     current_gold -= GRACE_DONATE_COST
                     continue
-                # 祈りを選択
-                if player.rng.random() < grace_awareness * 0.3:
+                # 祈りを選択（強化: 0.3→0.5）
+                if player.rng.random() < grace_awareness * 0.5:
                     actions.append("PRAY")
                     continue
 
-            # 通常の恩寵アクション選択
-            if GRACE_ENABLED and player.rng.random() < grace_awareness * 0.2:
+            # 通常の恩寵アクション選択（強化: 0.2→0.4）
+            if GRACE_ENABLED and player.rng.random() < grace_awareness * 0.4:
                 if player.has_ritual and player.rng.random() < 0.5:
                     actions.append("RITUAL")
                     continue
-                if player.rng.random() < 0.3:
+                if player.rng.random() < 0.4:  # 強化: 0.3→0.4
                     actions.append("PRAY")
                     continue
 
