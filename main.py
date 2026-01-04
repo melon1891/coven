@@ -74,6 +74,8 @@ GRACE_DECLARATION_ZERO_BONUS = 1
 GRACE_ZERO_TRICKS_BONUS = 1
 # 4位ボーナス: 恩寵選択時の獲得量
 GRACE_4TH_PLACE_BONUS = 1
+# 祈りアクション（要・儀式の祭壇）
+GRACE_PRAY_GAIN = 2
 
 ACTIONS = ["TRADE", "HUNT", "RECRUIT"]
 
@@ -1312,7 +1314,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
     # 利用可能なアクションを決定
     available_actions = ACTIONS[:]
     if GRACE_TEST_MODE and player.has_ritual:
-        available_actions = ACTIONS + ["RITUAL"]
+        available_actions = ACTIONS + ["RITUAL", "PRAY"]
 
     if player.is_bot:
         strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
@@ -1331,29 +1333,23 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                     break
 
         for _ in range(n):
-            # 恩寵特化: 儀式を積極的に選択
+            # 恩寵特化: 祈りを積極的に選択（金貨不要、ワーカー消費のみ）
             if (GRACE_TEST_MODE and player.has_ritual and
-                strat.get('prefer_grace', False) and
-                current_gold >= GRACE_RITUAL_GOLD_COST + max(0, expected_wage - 2)):
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
+                strat.get('prefer_grace', False)):
+                actions.append("PRAY")
                 continue
 
-            # 全性格共通: 閾値に近い場合、grace_awarenessに応じて儀式を選択
+            # 全性格共通: 閾値に近い場合、grace_awarenessに応じて祈りを選択
             if (GRACE_TEST_MODE and player.has_ritual and
                 grace_near_threshold and
-                current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
-                player.rng.random() < grace_awareness * 0.6):  # grace_awareness×60%で儀式
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
+                player.rng.random() < grace_awareness * 0.6):  # grace_awareness×60%で祈り
+                actions.append("PRAY")
                 continue
 
-            # ボットの儀式選択: 金貨に余裕があり、儀式が可能な場合、一定確率で選択
+            # ボットの祈り選択: 儀式の祭壇があり、恩寵を獲得したい場合
             if (GRACE_TEST_MODE and player.has_ritual and
-                current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
-                player.rng.random() < grace_awareness * 0.3):  # grace_awareness×30%で儀式
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
+                player.rng.random() < grace_awareness * 0.3):  # grace_awareness×30%で祈り
+                actions.append("PRAY")
                 continue
 
             if player.strategy == 'CONSERVATIVE':
@@ -1392,6 +1388,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
     print(f"\n{player.name} {n}人の見習いにアクションを割り当てます。")
     if GRACE_TEST_MODE and player.has_ritual:
         print(f"  (儀式の祭壇あり: RITUAL選択可能 - {GRACE_RITUAL_GOLD_COST}金→{GRACE_RITUAL_GAIN}恩寵)")
+        print(f"  (儀式の祭壇あり: PRAY選択可能 - ワーカー1人→{GRACE_PRAY_GAIN}恩寵)")
     for i in range(n):
         a = prompt_choice(f" ワーカー{i+1}のアクション", available_actions, default="TRADE")
         actions.append(a)
@@ -1432,6 +1429,11 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
                     player.gold -= GRACE_RITUAL_GOLD_COST
                     player.grace_points += GRACE_RITUAL_GAIN
                     grace_bonuses.append(f"儀式: -{GRACE_RITUAL_GOLD_COST}金 → +{GRACE_RITUAL_GAIN}恩寵")
+        elif a == "PRAY":
+            # 祈りアクション: ワーカー消費で恩寵獲得（要・儀式の祭壇）
+            if GRACE_TEST_MODE and player.has_ritual:
+                player.grace_points += GRACE_PRAY_GAIN
+                grace_bonuses.append(f"祈り: +{GRACE_PRAY_GAIN}恩寵")
         else:
             raise ValueError(f"Unknown action: {a}")
 
@@ -2994,6 +2996,191 @@ def run_all_grace_simulations():
         print("     → 閾値を上げることを検討")
     else:
         print("  ✓ 閾値バランスは適正範囲内です")
+
+
+def run_grace_balance_simulation(num_games: int = 1000) -> None:
+    """Run detailed grace balance simulation with win rate analysis by grace tier."""
+    print(f"=== 恩寵バランスシミュレーション ({num_games}試合) ===\n")
+
+    # Collect all player results
+    player_results = []  # List of (grace_points, vp, is_winner)
+
+    for game_id in range(num_games):
+        seed = game_id * 1000
+        rng = random.Random(seed)
+
+        # Create players with random strategies
+        bot_rng = random.Random(seed + 100)
+        players = [
+            Player("P1", is_bot=True, rng=random.Random(seed + 1), strategy=assign_random_strategy(bot_rng)),
+            Player("P2", is_bot=True, rng=random.Random(seed + 2), strategy=assign_random_strategy(bot_rng)),
+            Player("P3", is_bot=True, rng=random.Random(seed + 3), strategy=assign_random_strategy(bot_rng)),
+            Player("P4", is_bot=True, rng=random.Random(seed + 4), strategy=assign_random_strategy(bot_rng)),
+        ]
+
+        for p in players:
+            p.sets = []
+
+        upgrade_deck = UpgradeDeck(rng)
+
+        witch_pool: List[str] = []
+        for w in ALL_WITCHES:
+            count = WITCH_POOL_COUNTS.get(w, 1)
+            witch_pool.extend([w] * count)
+        rng.shuffle(witch_pool)
+
+        for round_no in range(ROUNDS):
+            _, _ = deal_round_cards(players, round_no, rng, None, 6, NUM_DECKS)
+
+            is_witch_round = (round_no == WITCH_ROUND)
+            if is_witch_round:
+                revealed = witch_pool[:REVEAL_UPGRADES]
+                witch_pool = witch_pool[REVEAL_UPGRADES:]
+            else:
+                revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
+
+            set_index = round_no % SETS_PER_GAME
+            leader_index = round_no % len(players)
+
+            for p in players:
+                p.tricks_won_this_round = 0
+
+            full_hands = {p.name: p.sets[set_index][:] for p in players}
+            for p in players:
+                p.declared_tricks = declare_tricks(p, full_hands[p.name][:], set_index)
+
+            playable_hands = {}
+            for p in players:
+                hand = full_hands[p.name]
+                seal_cards(p, hand, set_index)
+                playable_hands[p.name] = hand[:]
+
+            leader = leader_index
+            for trick_idx in range(TRICKS_PER_ROUND):
+                plays: List[Tuple[Player, Card]] = []
+                lead_card: Optional[Card] = None
+                for offset in range(len(players)):
+                    idx = (leader + offset) % len(players)
+                    pl = players[idx]
+                    hand = playable_hands[pl.name]
+                    chosen = choose_card(pl, lead_card, hand)
+                    hand.remove(chosen)
+                    plays.append((pl, chosen))
+                    if lead_card is None:
+                        lead_card = chosen
+                assert lead_card is not None
+                winner = trick_winner(lead_card.suit, plays)
+                winner.tricks_won_this_round += 1
+                leader = next(i for i, pp in enumerate(players) if pp.name == winner.name)
+
+            for p in players:
+                if p.tricks_won_this_round == p.declared_tricks:
+                    p.vp += DECLARATION_BONUS_VP
+                    if GRACE_TEST_MODE and p.declared_tricks == 0:
+                        p.grace_points += GRACE_DECLARATION_ZERO_BONUS
+
+            if GRACE_TEST_MODE:
+                for p in players:
+                    if p.tricks_won_this_round == 0:
+                        p.grace_points += GRACE_ZERO_TRICKS_BONUS
+
+            ranked = rank_players_for_upgrade(players, leader_index)
+            for p in ranked:
+                choice = choose_upgrade_or_gold(p, revealed, round_no)
+                if choice == "GOLD":
+                    p.gold += TAKE_GOLD_INSTEAD
+                else:
+                    revealed.remove(choice)
+                    apply_upgrade(p, choice)
+
+            if revealed and not is_witch_round:
+                upgrade_deck.discard_remaining(revealed)
+
+            fourth = ranked[-1]
+            choose_4th_place_bonus(fourth, None, round_no)
+
+            for p in players:
+                actions = choose_actions_for_player(p, round_no)
+                resolve_actions(p, actions)
+
+            for p in players:
+                pay_wages_and_debt(p, round_no)
+
+            if GRACE_TEST_MODE:
+                for p in players:
+                    if "WITCH_BLESSING" in p.witches:
+                        p.grace_points += 1
+
+            for p in players:
+                if p.basic_workers_new_hires > 0:
+                    p.basic_workers_total += p.basic_workers_new_hires
+                    p.basic_workers_new_hires = 0
+
+        # End-game scoring
+        for p in players:
+            if "WITCH_TREASURE" in p.witches:
+                bonus_vp = p.gold
+            else:
+                bonus_vp = p.gold // GOLD_TO_VP_RATE
+            p.vp += bonus_vp
+
+        if GRACE_TEST_MODE:
+            for p in players:
+                for threshold, bonus in GRACE_THRESHOLD_BONUS:
+                    if p.grace_points >= threshold:
+                        p.vp += bonus
+                        break
+
+        # Record results
+        players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
+        winner = players_sorted[0]
+        for p in players:
+            player_results.append({
+                'grace': p.grace_points,
+                'vp': p.vp,
+                'is_winner': p.name == winner.name,
+            })
+
+    # Analyze by grace tier
+    tiers = [
+        (0, 4, "0-4点"),
+        (5, 7, "5-7点"),
+        (8, 9, "8-9点"),
+        (10, 12, "10-12点"),
+        (13, 999, "13点以上"),
+    ]
+
+    print("### 恩寵帯別勝率\n")
+    print("| 恩寵帯 | 勝率 | 人数 | 平均VP |")
+    print("|--------|------|------|--------|")
+
+    total_winners = sum(1 for r in player_results if r['is_winner'])
+    winner_grace_sum = sum(r['grace'] for r in player_results if r['is_winner'])
+    loser_grace_sum = sum(r['grace'] for r in player_results if not r['is_winner'])
+
+    for low, high, label in tiers:
+        tier_results = [r for r in player_results if low <= r['grace'] <= high]
+        count = len(tier_results)
+        if count == 0:
+            print(f"| {label} | - | 0 | - |")
+            continue
+        wins = sum(1 for r in tier_results if r['is_winner'])
+        win_rate = wins / count * 100
+        avg_vp = sum(r['vp'] for r in tier_results) / count
+        print(f"| {label} | {win_rate:.1f}% | {count} | {avg_vp:.1f} |")
+
+    print("\n### 統計")
+    avg_grace = sum(r['grace'] for r in player_results) / len(player_results)
+    winner_avg = winner_grace_sum / total_winners if total_winners > 0 else 0
+    loser_avg = loser_grace_sum / (len(player_results) - total_winners) if (len(player_results) - total_winners) > 0 else 0
+
+    threshold_13_count = sum(1 for r in player_results if r['grace'] >= 13)
+    threshold_13_rate = threshold_13_count / len(player_results) * 100
+
+    print(f"- 勝者平均恩寵: {winner_avg:.1f}点")
+    print(f"- 敗者平均恩寵: {loser_avg:.1f}点")
+    print(f"- 13点到達率: {threshold_13_rate:.1f}%")
+    print(f"- 平均恩寵: {avg_grace:.2f}点")
 
 
 if __name__ == "__main__":
