@@ -78,6 +78,10 @@ GRACE_DECLARATION_ZERO_BONUS = 1
 GRACE_ZERO_TRICKS_BONUS = 1
 # 4位ボーナス: 恩寵選択時の獲得量
 GRACE_4TH_PLACE_BONUS = 1
+# 後出し権: トリック中に順番を最後に変更（1ラウンド1回）
+GRACE_LAST_PLAY_COST = 2
+# 負債軽減: 恩寵消費で負債1を消去
+GRACE_DEBT_REDUCTION_COST = 2
 
 # 基本アクション（PRAY は初期から使用可能）
 ACTIONS = ["TRADE", "HUNT", "RECRUIT", "PRAY"]
@@ -293,6 +297,7 @@ class Player:
     # Trick-taking round state
     tricks_won_this_round: int = 0
     declared_tricks: int = 0
+    used_last_play_this_round: bool = False  # 後出し権使用済みフラグ
 
     # Fixed hand: SETS_PER_GAME sets x CARDS_PER_SET cards
     sets: List[List[Card]] = field(default_factory=list)
@@ -1222,6 +1227,7 @@ def run_trick_taking(
 
     for p in players:
         p.tricks_won_this_round = 0
+        p.used_last_play_this_round = False
 
     full_hands: Dict[str, List[Card]] = {p.name: players[i].sets[set_index][:] for i, p in enumerate(players)}
 
@@ -1288,15 +1294,70 @@ def run_trick_taking(
         plays: List[Tuple[Player, Card]] = []
         lead_card: Optional[Card] = None
 
-        for offset in range(len(players)):
-            idx = (leader + offset) % len(players)
-            pl = players[idx]
+        # Build play order: leader first, then others
+        # Check for 後出し権 usage after leader plays
+        base_order = [(leader + offset) % len(players) for offset in range(len(players))]
+
+        # Leader plays first
+        leader_pl = players[base_order[0]]
+        leader_hand = playable_hands[leader_pl.name]
+        lead_card = choose_card(leader_pl, None, leader_hand)
+        leader_hand.remove(lead_card)
+        plays.append((leader_pl, lead_card))
+
+        # Now check if any non-leader player wants to use 後出し権
+        remaining_order = base_order[1:]  # indices of remaining players
+        last_play_user_idx: Optional[int] = None  # index in remaining_order of the user
+
+        if GRACE_ENABLED:
+            for i, pidx in enumerate(remaining_order):
+                p = players[pidx]
+                # Check if eligible: enough grace, not used this round, not already last
+                if (p.grace_points >= GRACE_LAST_PLAY_COST and
+                    not p.used_last_play_this_round and
+                    i < len(remaining_order) - 1):  # not already last
+
+                    use_last_play = False
+                    if p.is_bot:
+                        # Bot decision: use if strategically beneficial
+                        # Use if: winning declaration is at risk, or grace is abundant (>=4)
+                        tricks_needed = p.declared_tricks - p.tricks_won_this_round
+                        tricks_remaining = TRICKS_PER_ROUND - trick_idx
+                        if p.grace_points >= 4 and tricks_needed > 0 and tricks_remaining >= tricks_needed:
+                            use_last_play = p.rng.random() < 0.3  # 30% chance if conditions met
+                    else:
+                        # Human player: ask
+                        print(f"\n{p.name}: 後出し権を使用しますか？ (コスト: {GRACE_LAST_PLAY_COST}恩寵, 現在: {p.grace_points})")
+                        print(f"  リードカード: {lead_card}")
+                        choice = input("使用する？ (y/N): ").strip().lower()
+                        use_last_play = choice == 'y'
+
+                    if use_last_play:
+                        p.grace_points -= GRACE_LAST_PLAY_COST
+                        p.used_last_play_this_round = True
+                        last_play_user_idx = i
+                        print(f"  → {p.name} が後出し権を使用！ (-{GRACE_LAST_PLAY_COST}恩寵)")
+                        if logger:
+                            logger.log("grace_last_play", {
+                                "round": round_no + 1,
+                                "trick": trick_idx + 1,
+                                "player": p.name,
+                                "grace_remaining": p.grace_points,
+                            })
+                        break  # Only one player can use per trick
+
+        # Reorder remaining players if someone used 後出し権
+        if last_play_user_idx is not None:
+            user_pidx = remaining_order.pop(last_play_user_idx)
+            remaining_order.append(user_pidx)  # Move to end
+
+        # Remaining players play in order
+        for pidx in remaining_order:
+            pl = players[pidx]
             hand = playable_hands[pl.name]
             chosen = choose_card(pl, lead_card, hand)
             hand.remove(chosen)
             plays.append((pl, chosen))
-            if lead_card is None:
-                lead_card = chosen
 
         assert lead_card is not None
         winner = trick_winner(lead_card.suit, plays)
@@ -1572,6 +1633,26 @@ def pay_wages_and_debt(
 
     wage_net = max(0, wage_gross - discount)
 
+    # 恩寵による負債軽減: 給料支払い前に恩寵を消費して不足分を補う
+    grace_debt_reduction = 0
+    if GRACE_ENABLED and player.gold < wage_net:
+        potential_short = wage_net - player.gold
+        while (player.grace_points >= GRACE_DEBT_REDUCTION_COST and
+               potential_short > 0):
+            if player.is_bot:
+                # Bot: use if debt penalty would be worse (multiplier >= 2)
+                actual_multiplier = debt_multiplier if debt_multiplier is not None else DEBT_PENALTY_MULTIPLIER
+                if actual_multiplier >= 2:
+                    player.grace_points -= GRACE_DEBT_REDUCTION_COST
+                    player.gold += 1
+                    potential_short -= 1
+                    grace_debt_reduction += 1
+                else:
+                    break
+            else:
+                # Human player would be asked, but for simplicity in simulation, skip
+                break
+
     paid = min(player.gold, wage_net)
     short = max(0, wage_net - player.gold)
 
@@ -1598,6 +1679,7 @@ def pay_wages_and_debt(
         "paid_gold": paid,
         "short_gold": short,
         "debt_penalty": debt_penalty,
+        "grace_debt_reduction": grace_debt_reduction,  # 恩寵による負債軽減金額
         "gold_before": before_gold,
         "gold_after": player.gold,
         "vp_before": before_vp,
