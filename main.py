@@ -74,6 +74,8 @@ GRACE_DECLARATION_ZERO_BONUS = 1
 GRACE_ZERO_TRICKS_BONUS = 1
 # 4位ボーナス: 恩寵選択時の獲得量
 GRACE_4TH_PLACE_BONUS = 1
+# 恩寵獲得: 祈りアクション（儀式の祭壇が必要）
+GRACE_PRAY_GAIN = 1
 
 ACTIONS = ["TRADE", "HUNT", "RECRUIT"]
 
@@ -1312,7 +1314,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
     # 利用可能なアクションを決定
     available_actions = ACTIONS[:]
     if GRACE_TEST_MODE and player.has_ritual:
-        available_actions = ACTIONS + ["RITUAL"]
+        available_actions = ACTIONS + ["RITUAL", "PRAY"]
 
     if player.is_bot:
         strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
@@ -1331,29 +1333,23 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                     break
 
         for _ in range(n):
-            # 恩寵特化: 儀式を積極的に選択
+            # 恩寵特化: 祈りアクションを積極的に選択（金貨不要）
             if (GRACE_TEST_MODE and player.has_ritual and
-                strat.get('prefer_grace', False) and
-                current_gold >= GRACE_RITUAL_GOLD_COST + max(0, expected_wage - 2)):
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
+                strat.get('prefer_grace', False)):
+                actions.append("PRAY")
                 continue
 
-            # 全性格共通: 閾値に近い場合、grace_awarenessに応じて儀式を選択
+            # 全性格共通: 閾値に近い場合、grace_awarenessに応じて祈りを選択
             if (GRACE_TEST_MODE and player.has_ritual and
                 grace_near_threshold and
-                current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
-                player.rng.random() < grace_awareness * 0.6):  # grace_awareness×60%で儀式
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
+                player.rng.random() < grace_awareness * 0.6):  # grace_awareness×60%で祈り
+                actions.append("PRAY")
                 continue
 
-            # ボットの儀式選択: 金貨に余裕があり、儀式が可能な場合、一定確率で選択
+            # ボットの祈り選択: 儀式の祭壇があり、一定確率で選択
             if (GRACE_TEST_MODE and player.has_ritual and
-                current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
-                player.rng.random() < grace_awareness * 0.3):  # grace_awareness×30%で儀式
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
+                player.rng.random() < grace_awareness * 0.3):  # grace_awareness×30%で祈り
+                actions.append("PRAY")
                 continue
 
             if player.strategy == 'CONSERVATIVE':
@@ -1391,7 +1387,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
 
     print(f"\n{player.name} {n}人の見習いにアクションを割り当てます。")
     if GRACE_TEST_MODE and player.has_ritual:
-        print(f"  (儀式の祭壇あり: RITUAL選択可能 - {GRACE_RITUAL_GOLD_COST}金→{GRACE_RITUAL_GAIN}恩寵)")
+        print(f"  (儀式の祭壇あり: RITUAL={GRACE_RITUAL_GOLD_COST}金→{GRACE_RITUAL_GAIN}恩寵 / PRAY=無料→{GRACE_PRAY_GAIN}恩寵)")
     for i in range(n):
         a = prompt_choice(f" ワーカー{i+1}のアクション", available_actions, default="TRADE")
         actions.append(a)
@@ -1432,6 +1428,11 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
                     player.gold -= GRACE_RITUAL_GOLD_COST
                     player.grace_points += GRACE_RITUAL_GAIN
                     grace_bonuses.append(f"儀式: -{GRACE_RITUAL_GOLD_COST}金 → +{GRACE_RITUAL_GAIN}恩寵")
+        elif a == "PRAY":
+            # 祈りアクション: 無料で恩寵を獲得（儀式の祭壇が必要）
+            if GRACE_TEST_MODE and player.has_ritual:
+                player.grace_points += GRACE_PRAY_GAIN
+                grace_bonuses.append(f"祈り: +{GRACE_PRAY_GAIN}恩寵")
         else:
             raise ValueError(f"Unknown action: {a}")
 
