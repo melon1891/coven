@@ -45,7 +45,7 @@ The game runs 6 rounds, each with these phases:
 - `NUM_DECKS = 2` - 2 decks (48 cards = 6 ranks × 4 suits × 2)
 - `WAGE_CURVE = [1, 1, 2, 2, 2, 3]` - Initial worker wages per round
 - `UPGRADE_WORKER_COST = 2` - Cost to hire workers (no wages after)
-- `START_GOLD = 7`
+- `START_GOLD = 5`
 - `DECLARATION_BONUS_VP = 1` (no failure penalty)
 - `DEBT_PENALTY_MULTIPLIER = 2` - VP penalty per 1 gold debt
 - `WITCH_ROUND = 2` - Witches appear in round 3 (0-indexed)
