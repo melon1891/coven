@@ -50,7 +50,7 @@ uv run python main.py --simulate-grace    # 恩寵ポイント
 ROUNDS = 6              # 固定ラウンド数
 TRICKS_PER_ROUND = 4    # 1ラウンドのトリック数
 CARDS_PER_SET = 5       # 配られる手札枚数
-NUM_DECKS = 2           # デッキ数（48通常カード + 8切り札）
+NUM_DECKS = 2           # デッキ数（96通常カード + 4切り札）
 START_GOLD = 5          # 初期金貨
 INITIAL_WORKERS = 2     # 初期ワーカー数
 WAGE_CURVE = [1, 1, 2, 2, 2, 3]  # ラウンドごとの給料
@@ -64,11 +64,11 @@ WITCH_ROUND = 2         # 魔女が出現するラウンド（0-indexed、R3）
 2. **Upgrade Reveal** - アップグレード公開（R3は魔女）
 3. **Trick-Taking** - 宣言→封印1枚→4トリック
 4. **Upgrade Selection** - トリック獲得順に選択
-5. **Worker Placement** - TRADE/HUNT/RECRUIT実行
+5. **Worker Placement** - TRADE/HUNT/RECRUIT/RITUAL実行
 6. **Wage Payment** - 初期ワーカーのみ給料支払い
 
 ### Card Input Format (CLI)
 
 `{suit}{rank}` 形式:
 - S = Spade, H = Heart, D = Diamond, C = Club, T = Trump
-- 例: `S06`, `H03`, `D01`, `T01`
+- 例: `S06`, `H03`, `D01`, `T` (切り札はランクなし)
