@@ -474,7 +474,7 @@ ALL_WITCHES = [
     "WITCH_BLACKROAD",   # 交易強化: TRADEで+2金
     "WITCH_BLOODHUNT",   # 討伐強化: HUNTで+1VP
     "WITCH_HERD",        # 雇用支援: 雇用ラウンド給料-1
-    "WITCH_TREASURE",    # 金貨変換: ゲーム終了時1金→1VP
+    "WITCH_TREASURE",    # 金貨変換: ゲーム終了時1金→1恩寵
     "WITCH_BLESSING",    # 祈り強化: PRAYで+1恩寵
 ]
 
@@ -598,7 +598,7 @@ def upgrade_description(u: str) -> str:
         "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+2金",
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
-        "WITCH_TREASURE": "【効果】ゲーム終了時、1金貨につき1VPに変換可能",
+        "WITCH_TREASURE": "【効果】ゲーム終了時、1金貨につき1恩寵に変換可能",
         "WITCH_BLESSING": "【効果】PRAYを行うたび、追加で+1恩寵",
     }
     return descriptions.get(u, "説明なし")
@@ -625,10 +625,10 @@ WITCH_FLAVOR = {
 だが、誰も彼女に逆らおうとはしない。""",
 
     "WITCH_TREASURE": """《財宝変換の魔女》
-役割：終盤・金貨活用
+役割：終盤・恩寵獲得
 
-彼女の魔法は、金貨の価値を高める。
-だが、その代償を知る者は少ない。""",
+彼女の魔法は、金貨を協会への恩寵に変える。
+富を捧げることで、神の加護を得る。""",
 
     "WITCH_BLESSING": """《祈祷の魔女》
 役割：祈り強化・恩寵獲得
@@ -1782,6 +1782,20 @@ def main():
 
         logger.log("round_end", {"round": round_no + 1, "players": snapshot_players(players)})
 
+    # WITCH_TREASURE: 金貨→恩寵変換（閾値ボーナス計算前に実行）
+    if GRACE_ENABLED:
+        print("\n--- 金貨→恩寵変換（魔女効果）---")
+        for p in players:
+            if "WITCH_TREASURE" in p.witches and p.gold > 0:
+                grace_gained = p.gold
+                p.grace_points += grace_gained
+                print(f"{p.name}: {p.gold}G → +{grace_gained}恩寵 (《財宝変換の魔女》)")
+                logger.log("witch_treasure_convert", {
+                    "player": p.name,
+                    "gold": p.gold,
+                    "grace_gained": grace_gained,
+                })
+
     # 恩寵ポイント閾値ボーナス（ゲーム終了時）
     if GRACE_ENABLED:
         print("\n--- 恩寵ポイント閾値ボーナス ---")
@@ -1809,17 +1823,10 @@ def main():
     # ゲーム終了時: 金貨をVPに変換
     print("\n--- 金貨→VP変換 ---")
     for p in players:
-        # WITCH_TREASUREがあれば1:1、なければ2:1
-        if "WITCH_TREASURE" in p.witches:
-            bonus_vp = p.gold  # 1金 = 1VP
-            if bonus_vp > 0:
-                print(f"{p.name}: {p.gold}G → +{bonus_vp}VP (《財宝変換の魔女》: 1:1変換)")
-                p.vp += bonus_vp
-        else:
-            bonus_vp = p.gold // GOLD_TO_VP_RATE
-            if bonus_vp > 0:
-                print(f"{p.name}: {p.gold}G → +{bonus_vp}VP")
-                p.vp += bonus_vp
+        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        if bonus_vp > 0:
+            print(f"{p.name}: {p.gold}G → +{bonus_vp}VP")
+            p.vp += bonus_vp
 
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
     logger.log("game_end", {
@@ -2263,6 +2270,15 @@ class GameEngine:
 
     def _finish_game(self):
         """Finalize game and determine winner."""
+        # WITCH_TREASURE: 金貨→恩寵変換（閾値ボーナス計算前に実行）
+        if GRACE_ENABLED:
+            self._log("--- 金貨→恩寵変換（魔女効果）---")
+            for p in self.players:
+                if "WITCH_TREASURE" in p.witches and p.gold > 0:
+                    grace_gained = p.gold
+                    p.grace_points += grace_gained
+                    self._log(f"{p.name}: {p.gold}金貨 → +{grace_gained}恩寵 (《財宝変換の魔女》)")
+
         # 恩寵ポイント閾値ボーナス（ゲーム終了時）
         if GRACE_ENABLED:
             self._log("--- 恩寵ポイント閾値ボーナス ---")
@@ -2285,17 +2301,10 @@ class GameEngine:
         gold_to_vp_rate = self.config.gold_to_vp_rate
         self._log("--- 金貨→VP変換 ---")
         for p in self.players:
-            # WITCH_TREASUREがあれば1:1変換
-            if "WITCH_TREASURE" in p.witches:
-                bonus_vp = p.gold  # 1金 = 1VP
-                if bonus_vp > 0:
-                    self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP (《財宝変換の魔女》)")
-                    p.vp += bonus_vp
-            else:
-                bonus_vp = p.gold // gold_to_vp_rate if gold_to_vp_rate > 0 else 0
-                if bonus_vp > 0:
-                    self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP")
-                    p.vp += bonus_vp
+            bonus_vp = p.gold // gold_to_vp_rate if gold_to_vp_rate > 0 else 0
+            if bonus_vp > 0:
+                self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP")
+                p.vp += bonus_vp
 
         self.phase = "game_end"
         players_sorted = sorted(self.players, key=lambda p: (p.vp, p.gold), reverse=True)
@@ -2433,14 +2442,11 @@ def run_single_game_quiet(
                 p.basic_workers_total += p.basic_workers_new_hires
                 p.basic_workers_new_hires = 0
 
-    # Gold to VP conversion at end
-    for p in players:
-        # WITCH_TREASUREがあれば1:1変換
-        if "WITCH_TREASURE" in p.witches:
-            bonus_vp = p.gold
-        else:
-            bonus_vp = p.gold // GOLD_TO_VP_RATE
-        p.vp += bonus_vp
+    # WITCH_TREASURE: 金貨→恩寵変換（閾値ボーナス計算前に実行）
+    if GRACE_ENABLED:
+        for p in players:
+            if "WITCH_TREASURE" in p.witches and p.gold > 0:
+                p.grace_points += p.gold
 
     # Grace threshold bonus at game end
     grace_stats = {"points": [], "threshold_reached": [], "bonus_vp": []}
@@ -2458,6 +2464,11 @@ def run_single_game_quiet(
             p.vp += threshold_bonus
             grace_stats["threshold_reached"].append(threshold_reached)
             grace_stats["bonus_vp"].append(threshold_bonus)
+
+    # Gold to VP conversion at end
+    for p in players:
+        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        p.vp += bonus_vp
 
     # Return results
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
@@ -2846,13 +2857,25 @@ def run_single_game_with_debt_config(
                 p.basic_workers_total += p.basic_workers_new_hires
                 p.basic_workers_new_hires = 0
 
+    # WITCH_TREASURE: 金貨→恩寵変換（閾値ボーナス計算前に実行）
+    if GRACE_ENABLED:
+        for p in players:
+            if "WITCH_TREASURE" in p.witches and p.gold > 0:
+                p.grace_points += p.gold
+
+    # Grace threshold bonus at game end
+    if GRACE_ENABLED:
+        for p in players:
+            threshold_bonus = 0
+            for threshold, bonus in GRACE_THRESHOLD_BONUS:
+                if p.grace_points >= threshold:
+                    threshold_bonus = bonus
+                    break
+            p.vp += threshold_bonus
+
     # Gold to VP conversion at end
     for p in players:
-        # WITCH_TREASUREがあれば1:1変換
-        if "WITCH_TREASURE" in p.witches:
-            bonus_vp = p.gold
-        else:
-            bonus_vp = p.gold // GOLD_TO_VP_RATE
+        bonus_vp = p.gold // GOLD_TO_VP_RATE
         p.vp += bonus_vp
 
     # Return results
