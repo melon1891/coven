@@ -14,6 +14,7 @@ from main import (
     START_GOLD, INITIAL_WORKERS, DECLARATION_BONUS_VP,
     DEBT_PENALTY_MULTIPLIER, DEBT_PENALTY_CAP, GOLD_TO_VP_RATE, RESCUE_GOLD_FOR_4TH,
     ALL_UPGRADES, DEFAULT_ENABLED_UPGRADES,
+    GRACE_ENABLED, GRACE_THRESHOLD_BONUS,
 )
 
 st.set_page_config(page_title="coven", layout="wide")
@@ -271,7 +272,7 @@ with st.sidebar:
         戦略カードゲームです。
 
         - **プレイヤー**: 4人（あなた + Bot 3人）
-        - **ラウンド数**: 4ラウンド
+        - **ラウンド数**: 6ラウンド
         - **勝利条件**: 最終的に最も多くの **VP（勝利点）** を獲得
 
         **カード構成:**
@@ -331,10 +332,14 @@ with st.sidebar:
         **給料支払い（ラウンド終了時）:**
         | ラウンド | 初期ワーカー | 雇用ワーカー |
         |---------|-------------|-------------|
-        | R1 | 1金 | 1金 |
-        | R2 | 1金 | 2金 |
-        | R3 | 2金 | 3金 |
-        | R4 | 2金 | 4金 |
+        | R1 | 1金 | なし |
+        | R2 | 1金 | なし |
+        | R3 | 2金 | なし |
+        | R4 | 2金 | なし |
+        | R5 | 2金 | なし |
+        | R6 | 3金 | なし |
+
+        ※雇用ワーカーは取得時に2金支払い、以後給料なし
 
         **負債ペナルティ（金不足時）:**
         - 1〜3金不足: -1 VP
@@ -348,13 +353,15 @@ with st.sidebar:
         - TRADEで資金を確保
         - 宣言ボーナス（+1VP）を確実に狙う
 
-        **中盤（R2-R3）:**
+        **中盤（R3-R4）:**
         - アップグレードの優先度を考えてトリック数を調整
-        - ワーカー雇用は給料コストとのバランスを考慮
+        - ワーカー雇用は2金の初期コストを考慮
+        - R3は魔女獲得のチャンス
 
-        **終盤（R4）:**
+        **終盤（R5-R6）:**
         - 負債ペナルティは上限-3VPなので、リスクを取れる場面も
         - 最終ラウンドは雇用より直接VP獲得が有利
+        - 恩寵閾値ボーナスを意識
 
         **切り札の使い方:**
         - 切り札は「保険」として温存
@@ -386,6 +393,11 @@ with st.sidebar:
         **《結界織りの魔女》** - 条件付きVP
         > 各ラウンド最初にHUNTを行った場合、追加で+1VP
         > *結界は村を守る。同時に、外へ出ることも難しくする。*
+
+        ---
+        **《祝福の魔女》** - 恩寵獲得
+        > 毎ラウンド終了時に恩寵+1点を獲得
+        > *協会への忠誠を示す者に、彼女は静かに恩寵を与える。*
         """)
 
     st.divider()
@@ -406,18 +418,10 @@ with st.sidebar:
             "enabled_upgrades": DEFAULT_ENABLED_UPGRADES[:],
         }
 
-    # ゲームモード選択（目立つ位置に配置）
+    # ゲームモード表示（6ラウンド固定）
     st.subheader("🎮 ゲームモード")
-    current_rounds = st.session_state.game_config.get("rounds", ROUNDS)
-    game_mode = st.radio(
-        "ラウンド数を選択",
-        options=[4, 8],
-        index=0 if current_rounds == 4 else 1,
-        format_func=lambda x: f"{x}ラウンド（{'スタンダード' if x == 4 else 'ロング'}）",
-        horizontal=True,
-        key="game_mode_radio"
-    )
-    st.session_state.game_config["rounds"] = game_mode
+    st.info(f"📅 {ROUNDS}ラウンド（スタンダード）")
+    st.session_state.game_config["rounds"] = ROUNDS
 
     with st.expander("💰 初期リソース", expanded=False):
         st.session_state.game_config["start_gold"] = st.number_input(
@@ -521,9 +525,8 @@ with st.sidebar:
     with st.expander("📋 現在の設定値", expanded=False):
         config = st.session_state.game_config
         enabled_count = len(config.get("enabled_upgrades", ALL_UPGRADES))
-        rounds_val = config.get("rounds", ROUNDS)
         st.markdown(f"""
-        - **ゲームモード**: {rounds_val}ラウンド（{'スタンダード' if rounds_val == 4 else 'ロング'}）
+        - **ゲームモード**: {ROUNDS}ラウンド（スタンダード）
         - **初期金貨**: {config['start_gold']}G
         - **初期ワーカー**: {config['initial_workers']}人
         - **宣言ボーナス**: +{config['declaration_bonus_vp']}VP
@@ -636,8 +639,11 @@ for row in range(2):
 
             # コンパクトな表示
             st.markdown(f"**{name}**")
-            # 金貨とVPを1行に
-            st.markdown(f"💰 {p['gold']}G  |  🏆 {p['vp']}VP")
+            # 金貨とVPを1行に（恩寵ポイント有効時は追加）
+            if GRACE_ENABLED:
+                st.markdown(f"💰 {p['gold']}G  |  🏆 {p['vp']}VP  |  ✨ {p.get('grace_points', 0)}恩寵")
+            else:
+                st.markdown(f"💰 {p['gold']}G  |  🏆 {p['vp']}VP")
             # ワーカーと給料を1行に
             round_no = state["round_no"]
             if round_no < len(WAGE_CURVE):
@@ -925,12 +931,13 @@ else:
             }
             bg = bg_colors.get(i, "#e2e8f0")
             # カードスタイルで表示（文字色は常に黒）
+            grace_display = f"  |  ✨ {p.get('grace_points', 0)}恩寵" if GRACE_ENABLED else ""
             st.markdown(f"""
             <div style="padding:0.75rem; margin:0.5rem 0; border-radius:10px;
                         background: {bg}; color: #000;">
                 <span style="font-size:1.5rem;">{medal}</span>
                 <strong>{i}位 {p['name']}{player_marker}</strong><br>
-                🏆 {p['vp']}VP  |  💰 {p['gold']}G
+                🏆 {p['vp']}VP  |  💰 {p['gold']}G{grace_display}
             </div>
             """, unsafe_allow_html=True)
 
