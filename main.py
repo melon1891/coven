@@ -62,7 +62,6 @@ GRACE_ENABLED = True
 GRACE_THRESHOLD_BONUS = [
     (13, 8),   # 13点以上 → +8VP
     (10, 5),   # 10点以上 → +5VP
-    (5, 2),    # 5点以上 → +2VP
 ]
 # 恩寵消費効果: シール前に手札1枚をデッキトップと交換
 GRACE_HAND_SWAP_COST = 1
