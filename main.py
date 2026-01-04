@@ -1808,7 +1808,7 @@ class InputRequest:
 class GameEngine:
     """State-machine based game engine for GUI integration."""
 
-    def __init__(self, seed: int = 42, config: Optional[GameConfig] = None):
+    def __init__(self, seed: int = 42, config: Optional[GameConfig] = None, all_bots: bool = False):
         self.rng = random.Random(seed)
         self.deal_seed = seed
         self.config = config if config is not None else GameConfig()
@@ -1816,7 +1816,7 @@ class GameEngine:
         # CPUにランダムな性格を割り当て
         bot_rng = random.Random()
         self.players = [
-            Player("P1", is_bot=False, rng=random.Random(1)),
+            Player("P1", is_bot=all_bots, rng=random.Random(1), strategy=assign_random_strategy(bot_rng) if all_bots else None),
             Player("P2", is_bot=True, rng=random.Random(2), strategy=assign_random_strategy(bot_rng)),
             Player("P3", is_bot=True, rng=random.Random(3), strategy=assign_random_strategy(bot_rng)),
             Player("P4", is_bot=True, rng=random.Random(4), strategy=assign_random_strategy(bot_rng)),
@@ -3006,6 +3006,49 @@ def run_all_grace_simulations():
         print("  ✓ 閾値バランスは適正範囲内です")
 
 
+def run_auto_game(seed: int = 42) -> dict:
+    """Run a fully automated game with 4 bots for CI testing.
+
+    Returns a dict with game results for verification.
+    """
+    print(f"=== 自動実行モード (seed={seed}) ===")
+    print("4体のBotでゲームを自動実行します\n")
+
+    engine = GameEngine(seed=seed, all_bots=True)
+
+    # Run until game ends
+    while engine.step():
+        pass
+
+    state = engine.get_state()
+
+    # Print results
+    print("\n=== ゲーム終了 ===")
+    print(f"ラウンド数: {engine.config.rounds}")
+    print("\n最終結果:")
+
+    sorted_players = sorted(
+        state["players"],
+        key=lambda p: (p["vp"], p["gold"]),
+        reverse=True
+    )
+
+    for i, p in enumerate(sorted_players, start=1):
+        medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, "  ")
+        grace_str = f"  恩寵: {p.get('grace_points', 0)}" if GRACE_ENABLED else ""
+        print(f"{medal} {i}位 {p['name']}: {p['vp']}VP, {p['gold']}G{grace_str}")
+
+    print("\n✅ ゲームが正常に完了しました")
+
+    return {
+        "success": True,
+        "rounds": engine.config.rounds,
+        "players": sorted_players,
+        "winner": sorted_players[0]["name"],
+        "winner_vp": sorted_players[0]["vp"],
+    }
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="魔女協会 Card Game")
@@ -3013,6 +3056,8 @@ if __name__ == "__main__":
     parser.add_argument("--simulate-deck", action="store_true", help="Run deck/trump count optimization simulation")
     parser.add_argument("--simulate-debt-penalty", action="store_true", help="Run debt penalty optimization simulation")
     parser.add_argument("--simulate-grace", action="store_true", help="Run grace point system simulation")
+    parser.add_argument("--auto", action="store_true", help="Run automated game with 4 bots (for CI testing)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for --auto mode")
     args = parser.parse_args()
 
     try:
@@ -3024,6 +3069,9 @@ if __name__ == "__main__":
             run_all_debt_penalty_simulations()
         elif args.simulate_grace:
             run_all_grace_simulations()
+        elif args.auto:
+            result = run_auto_game(seed=args.seed)
+            sys.exit(0 if result["success"] else 1)
         else:
             main()
     except KeyboardInterrupt:

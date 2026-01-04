@@ -2,79 +2,73 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Quick Reference
+
+基本的な使い方やゲームルールについては [README.md](./README.md) を参照してください。
+
 ## Project Overview
 
-witchASC is a CLI-based card game prototype combining trick-taking mechanics with worker placement, themed around a Witch Guild. The game is designed for 4 players (1 human + 3 bots).
+魔女協会（Coven）は、トリックテイキングとワーカープレイスメントを組み合わせたCLIベースのカードゲームプロトタイプです。4人プレイ（1人+Bot3人、または全員Bot）で遊べます。
 
-## Running the Game
+## Development Commands
 
 ```bash
-# Using uv (recommended)
+# CLIモード（対人）
 uv run python main.py
 
-# Or with standard Python (requires Python 3.11+)
-python main.py
+# 自動実行モード（CI/動作確認用）
+uv run python main.py --auto
+
+# Streamlit GUI
+uv run streamlit run streamlit_app.py
+
+# シミュレーション
+uv run python main.py --simulate          # カードランク
+uv run python main.py --simulate-deck     # デッキ枚数
+uv run python main.py --simulate-debt-penalty  # 負債ペナルティ
+uv run python main.py --simulate-grace    # 恩寵ポイント
 ```
 
-## Game Architecture
+## Architecture
 
-### Core Game Loop (`main.py`)
+### Core Files
 
-The game runs 6 rounds, each with these phases:
+- `main.py` - ゲームロジック・CLI・シミュレーション
+- `streamlit_app.py` - Streamlit GUI
 
-1. **Card Deal** - Deck reshuffled each round (48 cards + 4 trumps)
-2. **Upgrade Reveal** - Upgrades revealed (Round 3 shows witches instead)
-3. **Trick-Taking Phase**
-   - Players see 5 cards, declare target tricks (0-4)
-   - Seal 1 card (unplayable), play 4 tricks with remaining 4 cards
-   - Trump cards can win any trick; must follow lead suit if able
-   - Declaration bonus (+1 VP) for matching predicted tricks
-4. **Upgrade Selection** - Players ranked by tricks won pick upgrades or take gold
-5. **Worker Placement** - Assign workers to TRADE/HUNT/RECRUIT actions
-6. **Wage Payment** - Pay initial workers only (hired workers paid 2G upfront, no wages)
+### Key Classes
 
-### Key Data Structures
+- `GameEngine` - ステートマシンベースのゲームエンジン（GUI用）
+- `GameConfig` - ゲーム設定（ラウンド数、初期金貨など）
+- `Card(suit, rank)` - カードを表すfrozen dataclass
+- `Player` - プレイヤーの状態（金貨、VP、ワーカーなど）
+- `UpgradeDeck` - アップグレードカードのデッキ管理
 
-- `Card(suit, rank)` - Frozen dataclass representing playing cards
-- `Player` - Mutable dataclass with gold, VP, workers, action levels, witches
-- `JsonlLogger` - Writes game events to `game_log.jsonl` for analysis
+### Game Configuration Constants
 
-### Game Configuration (constants at top of file)
+```python
+ROUNDS = 6              # 固定ラウンド数
+TRICKS_PER_ROUND = 4    # 1ラウンドのトリック数
+CARDS_PER_SET = 5       # 配られる手札枚数
+NUM_DECKS = 2           # デッキ数（48通常カード + 8切り札）
+START_GOLD = 5          # 初期金貨
+INITIAL_WORKERS = 2     # 初期ワーカー数
+WAGE_CURVE = [1, 1, 2, 2, 2, 3]  # ラウンドごとの給料
+UPGRADE_WORKER_COST = 2 # 雇用ワーカーの初期コスト
+WITCH_ROUND = 2         # 魔女が出現するラウンド（0-indexed、R3）
+```
 
-- `ROUNDS = 6`, `TRICKS_PER_ROUND = 4`, `CARDS_PER_SET = 5`
-- `NUM_DECKS = 2` - 2 decks (48 cards = 6 ranks × 4 suits × 2)
-- `WAGE_CURVE = [1, 1, 2, 2, 2, 3]` - Initial worker wages per round
-- `UPGRADE_WORKER_COST = 2` - Cost to hire workers (no wages after)
-- `START_GOLD = 5`
-- `DECLARATION_BONUS_VP = 1` (no failure penalty)
-- `DEBT_PENALTY_MULTIPLIER = 2` - VP penalty per 1 gold debt
-- `WITCH_ROUND = 2` - Witches appear in round 3 (0-indexed)
-- Trade upgrade: +2 gold/level (base 2, Lv1=4, Lv2=6)
-- Hunt upgrade: +1 VP/level (base 1, Lv1=2, Lv2=3)
+### Game Flow (per round)
 
-### Bot Logic
+1. **Card Deal** - 5枚配布
+2. **Upgrade Reveal** - アップグレード公開（R3は魔女）
+3. **Trick-Taking** - 宣言→封印1枚→4トリック
+4. **Upgrade Selection** - トリック獲得順に選択
+5. **Worker Placement** - TRADE/HUNT/RECRUIT実行
+6. **Wage Payment** - 初期ワーカーのみ給料支払い
 
-Bots use simple heuristics in `choose_card()`, `declare_tricks()`, `seal_cards()`, and `choose_upgrade_or_gold()`. Human player (P1) receives CLI prompts.
+### Card Input Format (CLI)
 
-## Card Input Format
-
-When playing as human, enter cards as `{suit}{rank}`:
+`{suit}{rank}` 形式:
 - S = Spade, H = Heart, D = Diamond, C = Club, T = Trump
-- Examples: `S06` (Spade 6), `H03` (Heart 3), `D01` (Diamond Ace), `T01` (Trump)
-
-## Logging
-
-All game events are logged to `game_log.jsonl` in JSONL format with timestamps, game IDs, and full state snapshots. Useful for game balance analysis.
-
-## Simulation Commands
-
-```bash
-# Card rank optimization simulation
-uv run python main.py --simulate
-
-# Deck count optimization simulation
-uv run python main.py --simulate-deck
-
-# Debt penalty optimization simulation
-uv run python main.py --simulate-debt-penalty
-```
+- 例: `S06`, `H03`, `D01`, `T01`
