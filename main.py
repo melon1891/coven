@@ -65,9 +65,13 @@ GRACE_THRESHOLD_BONUS = [
 ]
 # 恩寵消費効果: シール前に手札1枚をデッキトップと交換
 GRACE_HAND_SWAP_COST = 1
-# 恩寵獲得: 儀式アクション（金貨 → 恩寵）
-GRACE_RITUAL_GOLD_COST = 3
-GRACE_RITUAL_GAIN = 2
+# 恩寵獲得: 祈りアクション（ワーカー配置 → 恩寵）
+GRACE_PRAY_GAIN = 1  # 基礎獲得量
+# 恩寵獲得: 寄付アクション（金貨 → 恩寵、アップグレードで解放）
+GRACE_DONATE_COST = 2  # 2金 → 1恩寵
+GRACE_DONATE_GAIN = 1
+# 恩寵獲得: 儀式アクション（ワーカー → 恩寵、アップグレードで解放）
+GRACE_RITUAL_GAIN = 1  # 1ワーカー → 1恩寵
 # 恩寵獲得: 宣言0成功
 GRACE_DECLARATION_ZERO_BONUS = 1
 # 恩寵獲得: トリテ0勝
@@ -75,7 +79,8 @@ GRACE_ZERO_TRICKS_BONUS = 1
 # 4位ボーナス: 恩寵選択時の獲得量
 GRACE_4TH_PLACE_BONUS = 1
 
-ACTIONS = ["TRADE", "HUNT", "RECRUIT", "RITUAL"]
+# 基本アクション（PRAY は初期から使用可能）
+ACTIONS = ["TRADE", "HUNT", "RECRUIT", "PRAY"]
 
 # === CPU性格定義 ===
 # grace_awareness: 恩寵獲得の意識（0=無関心, 0.5=適度, 1=積極的）
@@ -274,8 +279,10 @@ class Player:
     # Recruit upgrades (pick one of them, overwrite allowed)
     recruit_upgrade: Optional[str] = None  # "RECRUIT_WAGE_DISCOUNT" or None
 
-    # Ritual upgrade (恩寵システム用) - アップグレード可能（0-2レベル）
-    ritual_level: int = 0  # 基礎レベル0から開始、UP_RITUALでレベルアップ
+    # 恩寵システム用アップグレード
+    pray_level: int = 0  # 祈りレベル（0-2）: 恩寵獲得量 = 1 + pray_level
+    has_donate: bool = False  # 寄付アクション解放済み
+    has_ritual: bool = False  # 儀式アクション解放済み
 
     # Permanent witches (flavor for tie-break)
     witches: List[str] = field(default_factory=list)
@@ -299,9 +306,9 @@ class Player:
     def hunt_yield(self) -> int:
         return 1 + self.hunt_level
 
-    def ritual_yield(self) -> int:
-        """儀式アクションで獲得する恩寵ポイント（Lv0=2, Lv1=3, Lv2=4）"""
-        return 2 + self.ritual_level
+    def pray_yield(self) -> int:
+        """祈りアクションで獲得する恩寵ポイント（Lv0=1, Lv1=2, Lv2=3）"""
+        return GRACE_PRAY_GAIN + self.pray_level
 
     def permanent_witch_count(self) -> int:
         return len(self.witches)
@@ -326,8 +333,10 @@ def snapshot_players(players: List[Player]) -> List[Dict[str, Any]]:
             "trade_yield": p.trade_yield(),
             "hunt_yield": p.hunt_yield(),
             "recruit_upgrade": p.recruit_upgrade,
-            "ritual_level": p.ritual_level,  # 儀式レベル（0-2）
-            "ritual_yield": p.ritual_yield(),  # 儀式の獲得恩寵
+            "pray_level": p.pray_level,  # 祈りレベル（0-2）
+            "pray_yield": p.pray_yield(),  # 祈りの獲得恩寵
+            "has_donate": p.has_donate,  # 寄付アクション解放
+            "has_ritual": p.has_ritual,  # 儀式アクション解放
             "witches": p.witches[:],
             "declared_tricks": p.declared_tricks,
             "tricks_won": p.tricks_won_this_round,
@@ -458,7 +467,9 @@ ALL_UPGRADES = [
     "UP_HUNT",
     "RECRUIT_INSTANT",
     "RECRUIT_WAGE_DISCOUNT",
-    "UP_RITUAL",  # 儀式強化: 恩寵獲得量+1
+    "UP_PRAY",     # 祈り強化: 恩寵獲得量+1
+    "UP_DONATE",   # 寄付アクション解放
+    "UP_RITUAL",   # 儀式アクション解放
 ]
 
 # 魔女カード（ラウンド3のみ登場）
@@ -484,7 +495,9 @@ UPGRADE_POOL_COUNTS = {
     "UP_HUNT": 6,
     "RECRUIT_INSTANT": 2,
     "RECRUIT_WAGE_DISCOUNT": 2,
-    "UP_RITUAL": 2,  # 儀式強化
+    "UP_PRAY": 2,    # 祈り強化
+    "UP_DONATE": 2,  # 寄付アクション解放
+    "UP_RITUAL": 2,  # 儀式アクション解放
 }
 
 # 魔女カードのプール内の枚数
@@ -567,7 +580,9 @@ def upgrade_name(u: str) -> str:
         "UP_HUNT": "魔物討伐 改善（レベル+1）",
         "RECRUIT_INSTANT": "見習い魔女派遣（2金で+2人）",
         "RECRUIT_WAGE_DISCOUNT": "育成負担軽減の護符（雇用ターン給料軽減）",
-        "UP_RITUAL": "儀式の祭壇 強化（レベル+1）",
+        "UP_PRAY": "祈りの祭壇 強化（レベル+1）",
+        "UP_DONATE": "寄付の祭壇（寄付アクション解放）",
+        "UP_RITUAL": "儀式の祭壇（儀式アクション解放）",
         "WITCH_BLACKROAD": "《黒路の魔女》",
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
         "WITCH_HERD": "《群導の魔女》",
@@ -586,7 +601,9 @@ def upgrade_description(u: str) -> str:
         "UP_HUNT": "討伐アクションの獲得VPが+1増加します。最大レベル2まで強化可能。",
         "RECRUIT_INSTANT": "2金支払い、即座に見習い2人を獲得。以後給料支払い不要。",
         "RECRUIT_WAGE_DISCOUNT": "雇用したターンの給料支払いが軽減されます。",
-        "UP_RITUAL": f"【儀式強化】儀式アクションの恩寵獲得+1。最大レベル2まで強化可能（基礎2→Lv1:3→Lv2:4）。",
+        "UP_PRAY": "【祈り強化】祈りアクションの恩寵獲得+1。最大レベル2まで強化可能（基礎1→Lv1:2→Lv2:3）。",
+        "UP_DONATE": "【寄付アクション解放】2金 → 1恩寵に変換可能。金貨を恩寵に変えたいときに。",
+        "UP_RITUAL": "【儀式アクション解放】1ワーカー → 1恩寵。ワーカーで追加の恩寵獲得スロットを得る。",
         "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+1金",
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
@@ -650,9 +667,15 @@ def can_take_upgrade(player: Player, u: str) -> bool:
         return player.trade_level < 2
     if u == "UP_HUNT":
         return player.hunt_level < 2
+    if u == "UP_PRAY":
+        # 祈り強化は恩寵システム有効時のみ、かつレベル2未満の場合のみ取得可能
+        return GRACE_ENABLED and player.pray_level < 2
+    if u == "UP_DONATE":
+        # 寄付アクション解放は恩寵システム有効時のみ、かつまだ持っていない場合のみ
+        return GRACE_ENABLED and not player.has_donate
     if u == "UP_RITUAL":
-        # 儀式強化は恩寵システム有効時のみ、かつレベル2未満の場合のみ取得可能
-        return GRACE_ENABLED and player.ritual_level < 2
+        # 儀式アクション解放は恩寵システム有効時のみ、かつまだ持っていない場合のみ
+        return GRACE_ENABLED and not player.has_ritual
     return True
 
 
@@ -668,9 +691,15 @@ def apply_upgrade(player: Player, u: str) -> None:
         player.upgraded_workers += 2
     elif u == "RECRUIT_WAGE_DISCOUNT":
         player.recruit_upgrade = u
+    elif u == "UP_PRAY":
+        # 祈りの祭壇をアップグレード（恩寵獲得量+1）
+        player.pray_level = min(2, player.pray_level + 1)
+    elif u == "UP_DONATE":
+        # 寄付アクション解放
+        player.has_donate = True
     elif u == "UP_RITUAL":
-        # 儀式の祭壇をアップグレード（恩寵獲得量+1）
-        player.ritual_level = min(2, player.ritual_level + 1)
+        # 儀式アクション解放
+        player.has_ritual = True
     elif u.startswith("WITCH_"):
         player.witches.append(u)
 
@@ -706,12 +735,24 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
                     grace_near_threshold = True
                     break
 
-        # 恩寵特化: 儀式・祝福魔女を最優先
-        if strat.get('prefer_grace', False):
+        # 恩寵アップグレードの優先順位を判定する関数
+        def pick_grace_upgrade():
+            # 祈り強化 > 儀式解放 > 寄付解放 の順で優先
+            if 'UP_PRAY' in available:
+                return 'UP_PRAY'
             if 'UP_RITUAL' in available:
                 return 'UP_RITUAL'
+            if 'UP_DONATE' in available:
+                return 'UP_DONATE'
             if 'WITCH_BLESSING' in available:
                 return 'WITCH_BLESSING'
+            return None
+
+        # 恩寵特化: 祈り強化・儀式・寄付・祝福魔女を最優先
+        if strat.get('prefer_grace', False):
+            grace_pick = pick_grace_upgrade()
+            if grace_pick:
+                return grace_pick
 
         # 堅実: 常に金貨優先（ただし閾値近ければ祝福魔女は検討）
         if strat['prefer_gold']:
@@ -726,10 +767,9 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
                 return 'RECRUIT_INSTANT'
             # 恩寵アップグレードも考慮
             if grace_near_threshold:
-                if 'UP_RITUAL' in available and player.rng.random() < grace_awareness:
-                    return 'UP_RITUAL'
-                if 'WITCH_BLESSING' in available and player.rng.random() < grace_awareness:
-                    return 'WITCH_BLESSING'
+                grace_pick = pick_grace_upgrade()
+                if grace_pick and player.rng.random() < grace_awareness:
+                    return grace_pick
             for u in available:
                 if u.startswith('UP_') or u.startswith('WITCH_'):
                     return u
@@ -742,10 +782,9 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
 
         # 恩寵特化: ワーカー補充より恩寵優先
         if strat.get('prefer_grace', False):
-            if 'UP_RITUAL' in available:
-                return 'UP_RITUAL'
-            if 'WITCH_BLESSING' in available:
-                return 'WITCH_BLESSING'
+            grace_pick = pick_grace_upgrade()
+            if grace_pick:
+                return grace_pick
 
         # バランス/借金回避: ワーカー上限まで雇用、それ以外はアップグレード
         if current_workers < strat['max_workers']:
@@ -755,10 +794,9 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
         # アップグレード優先度（恩寵意識を反映）
         # 閾値に近い場合は恩寵アップグレードを優先
         if grace_near_threshold and player.rng.random() < grace_awareness:
-            if 'UP_RITUAL' in available:
-                return 'UP_RITUAL'
-            if 'WITCH_BLESSING' in available:
-                return 'WITCH_BLESSING'
+            grace_pick = pick_grace_upgrade()
+            if grace_pick:
+                return grace_pick
 
         for u in available:
             if u.startswith('UP_HUNT'):
@@ -768,8 +806,9 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
 
         # 恩寵アップグレードを通常優先度で検討
         if player.rng.random() < grace_awareness:
-            if 'UP_RITUAL' in available:
-                return 'UP_RITUAL'
+            grace_pick = pick_grace_upgrade()
+            if grace_pick:
+                return grace_pick
 
         for u in available:
             if u.startswith('WITCH_'):
@@ -1310,18 +1349,29 @@ def rank_players_for_upgrade(players: List[Player], leader_index: int) -> List[P
 
 # ======= Worker Placement =======
 
+def get_available_actions(player: Player) -> List[str]:
+    """プレイヤーが使用可能なアクションのリストを返す"""
+    available = ACTIONS[:]  # TRADE, HUNT, RECRUIT, PRAY
+    if GRACE_ENABLED:
+        if player.has_donate:
+            available.append("DONATE")
+        if player.has_ritual:
+            available.append("RITUAL")
+    return available
+
+
 def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
     n = player.basic_workers_total
     actions: List[str] = []
 
-    # 利用可能なアクションを決定（RITUALは最初から使用可能）
-    available_actions = ACTIONS[:]
+    # 利用可能なアクションを決定
+    available_actions = get_available_actions(player)
 
     if player.is_bot:
         strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
         expected_wage = calc_expected_wage(player, round_no)
         gold_needed = expected_wage - player.gold
-        current_gold = player.gold  # Track gold for RITUAL decisions
+        current_gold = player.gold  # Track gold for DONATE decisions
         grace_awareness = strat.get('grace_awareness', 0.5)
 
         # 恩寵閾値への近さをチェック
@@ -1334,30 +1384,49 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                     break
 
         for _ in range(n):
-            # 恩寵特化: 儀式を積極的に選択
-            if (GRACE_ENABLED and
-                strat.get('prefer_grace', False) and
-                current_gold >= GRACE_RITUAL_GOLD_COST + max(0, expected_wage - 2)):
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
-                continue
+            # 恩寵特化: 祈り、儀式、寄付を積極的に選択
+            if GRACE_ENABLED and strat.get('prefer_grace', False):
+                # 儀式が使えれば儀式（追加の恩寵スロット）
+                if player.has_ritual and player.rng.random() < 0.5:
+                    actions.append("RITUAL")
+                    continue
+                # 寄付が使えて金貨に余裕があれば寄付
+                if (player.has_donate and
+                    current_gold >= GRACE_DONATE_COST + max(0, expected_wage - 2)):
+                    actions.append("DONATE")
+                    current_gold -= GRACE_DONATE_COST
+                    continue
+                # 祈り
+                if player.rng.random() < 0.6:
+                    actions.append("PRAY")
+                    continue
 
-            # 全性格共通: 閾値に近い場合、grace_awarenessに応じて儀式を選択
-            if (GRACE_ENABLED and
-                grace_near_threshold and
-                current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
-                player.rng.random() < grace_awareness * 0.6):  # grace_awareness×60%で儀式
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
-                continue
+            # 全性格共通: 閾値に近い場合、恩寵アクションを選択
+            if GRACE_ENABLED and grace_near_threshold:
+                # 儀式が使えれば選択
+                if player.has_ritual and player.rng.random() < grace_awareness * 0.5:
+                    actions.append("RITUAL")
+                    continue
+                # 寄付が使えて金貨があれば選択
+                if (player.has_donate and
+                    current_gold >= GRACE_DONATE_COST + expected_wage and
+                    player.rng.random() < grace_awareness * 0.4):
+                    actions.append("DONATE")
+                    current_gold -= GRACE_DONATE_COST
+                    continue
+                # 祈りを選択
+                if player.rng.random() < grace_awareness * 0.3:
+                    actions.append("PRAY")
+                    continue
 
-            # ボットの儀式選択: 金貨に余裕があり、一定確率で選択
-            if (GRACE_ENABLED and
-                current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
-                player.rng.random() < grace_awareness * 0.3):  # grace_awareness×30%で儀式
-                actions.append("RITUAL")
-                current_gold -= GRACE_RITUAL_GOLD_COST
-                continue
+            # 通常の恩寵アクション選択
+            if GRACE_ENABLED and player.rng.random() < grace_awareness * 0.2:
+                if player.has_ritual and player.rng.random() < 0.5:
+                    actions.append("RITUAL")
+                    continue
+                if player.rng.random() < 0.3:
+                    actions.append("PRAY")
+                    continue
 
             if player.strategy == 'CONSERVATIVE':
                 # 堅実: 常にTRADE
@@ -1379,9 +1448,9 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                     else:
                         actions.append("TRADE")
             elif player.strategy == 'GRACE_FOCUSED':
-                # 恩寵特化: HUNT控えめ、TRADEで金貨を確保（儀式用）
-                if player.rng.random() < strat['hunt_ratio']:
-                    actions.append("HUNT")
+                # 恩寵特化: 祈り優先、それ以外はTRADE
+                if player.rng.random() < 0.4:
+                    actions.append("PRAY")
                 else:
                     actions.append("TRADE")
             else:  # BALANCED
@@ -1394,7 +1463,11 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
 
     print(f"\n{player.name} {n}人の見習いにアクションを割り当てます。")
     if GRACE_ENABLED:
-        print(f"  (儀式アクション: {GRACE_RITUAL_GOLD_COST}金→{player.ritual_yield()}恩寵 [Lv{player.ritual_level}])")
+        print(f"  祈り: 1ワーカー → {player.pray_yield()}恩寵 [Lv{player.pray_level}]")
+        if player.has_donate:
+            print(f"  寄付: 1ワーカー + {GRACE_DONATE_COST}金 → {GRACE_DONATE_GAIN}恩寵")
+        if player.has_ritual:
+            print(f"  儀式: 1ワーカー → {GRACE_RITUAL_GAIN}恩寵")
     for i in range(n):
         a = prompt_choice(f" ワーカー{i+1}のアクション", available_actions, default="TRADE")
         actions.append(a)
@@ -1428,14 +1501,24 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
             first_hunt_done = True
         elif a == "RECRUIT":
             player.basic_workers_new_hires += 1
-        elif a == "RITUAL":
-            # 儀式アクション: 金貨を恩寵に変換
+        elif a == "PRAY":
+            # 祈りアクション: ワーカー配置で恩寵獲得
             if GRACE_ENABLED:
-                if player.gold >= GRACE_RITUAL_GOLD_COST:
-                    ritual_gain = player.ritual_yield()
-                    player.gold -= GRACE_RITUAL_GOLD_COST
-                    player.grace_points += ritual_gain
-                    grace_bonuses.append(f"儀式(Lv{player.ritual_level}): -{GRACE_RITUAL_GOLD_COST}金 → +{ritual_gain}恩寵")
+                pray_gain = player.pray_yield()
+                player.grace_points += pray_gain
+                grace_bonuses.append(f"祈り(Lv{player.pray_level}): +{pray_gain}恩寵")
+        elif a == "DONATE":
+            # 寄付アクション: 金貨を恩寵に変換（アップグレードで解放）
+            if GRACE_ENABLED and player.has_donate:
+                if player.gold >= GRACE_DONATE_COST:
+                    player.gold -= GRACE_DONATE_COST
+                    player.grace_points += GRACE_DONATE_GAIN
+                    grace_bonuses.append(f"寄付: -{GRACE_DONATE_COST}金 → +{GRACE_DONATE_GAIN}恩寵")
+        elif a == "RITUAL":
+            # 儀式アクション: ワーカーで恩寵獲得（アップグレードで解放）
+            if GRACE_ENABLED and player.has_ritual:
+                player.grace_points += GRACE_RITUAL_GAIN
+                grace_bonuses.append(f"儀式: +{GRACE_RITUAL_GAIN}恩寵")
         else:
             raise ValueError(f"Unknown action: {a}")
 
@@ -2115,6 +2198,7 @@ class GameEngine:
                         "num_workers": player.basic_workers_total,
                         "witches": player.witches[:],
                         "can_use_ritual": "WITCH_RITUAL" in player.witches and not player.ritual_used_this_round,
+                        "available_actions": get_available_actions(player),
                     }
                 )
                 self.wp_player_index += 1
@@ -2975,12 +3059,12 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
     }
 
 
-def run_all_grace_simulations():
+def run_all_grace_simulations(num_games: int = 1000):
     """Run grace point system analysis simulation."""
     print("=== 恩寵ポイントシステム分析シミュレーション ===")
-    print(f"100ゲーム実行中...\n")
+    print(f"{num_games}ゲーム実行中...\n")
 
-    result = run_grace_simulation(num_games=100)
+    result = run_grace_simulation(num_games=num_games)
 
     print("=" * 60)
     print("=== シミュレーション結果 ===")
@@ -2996,7 +3080,6 @@ def run_all_grace_simulations():
     print(f"  最大: {result['max_grace_points']}")
 
     print(f"\n【閾値到達率】")
-    print(f"  5点以上到達率: {result['threshold_5_rate']*100:.1f}%")
     print(f"  10点以上到達率: {result['threshold_10_rate']*100:.1f}%")
     print(f"  13点以上到達率: {result['threshold_13_rate']*100:.1f}%")
 
@@ -3008,20 +3091,20 @@ def run_all_grace_simulations():
 
     # バランス評価
     print("\n【バランス評価】")
-    if result['avg_grace_points'] < 3:
-        print("  ⚠️ 恩寵獲得量が少なすぎます（平均3点未満）")
+    if result['avg_grace_points'] < 5:
+        print("  ⚠️ 恩寵獲得量が少なすぎます（平均5点未満）")
         print("     → 獲得手段を増やすか、獲得量を上げることを検討")
-    elif result['avg_grace_points'] > 10:
-        print("  ⚠️ 恩寵獲得量が多すぎます（平均10点超）")
+    elif result['avg_grace_points'] > 15:
+        print("  ⚠️ 恩寵獲得量が多すぎます（平均15点超）")
         print("     → 獲得量を調整することを検討")
     else:
         print("  ✓ 恩寵獲得量は適正範囲内です")
 
-    if result['threshold_5_rate'] < 0.3:
-        print("  ⚠️ 閾値到達率が低すぎます（5点到達率30%未満）")
+    if result['threshold_10_rate'] < 0.15:
+        print("  ⚠️ 閾値到達率が低すぎます（10点到達率15%未満）")
         print("     → 閾値を下げるか、獲得量を増やすことを検討")
-    elif result['threshold_5_rate'] > 0.8:
-        print("  ⚠️ 閾値到達が容易すぎます（5点到達率80%超）")
+    elif result['threshold_10_rate'] > 0.6:
+        print("  ⚠️ 閾値到達が容易すぎます（10点到達率60%超）")
         print("     → 閾値を上げることを検討")
     else:
         print("  ✓ 閾値バランスは適正範囲内です")

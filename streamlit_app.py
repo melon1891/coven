@@ -307,7 +307,9 @@ with st.sidebar:
 | TRADE | 金貨を獲得（2 + Trade Level） |
 | HUNT | VPを獲得（1 + Hunt Level） |
 | RECRUIT | ワーカー+1（次ラウンドから稼働） |
-| RITUAL | 3金 → 恩寵獲得（2 + Ritual Level） |
+| PRAY | 恩寵を獲得（1 + Pray Level） |
+| DONATE※ | 2金 → 1恩寵（アップグレードで解放） |
+| RITUAL※ | 1恩寵を獲得（アップグレードで解放） |
 
 ### 6️⃣ 給料支払い
 初期ワーカーに給料を支払う（雇用ワーカーは取得時2金払済のため不要）
@@ -342,8 +344,10 @@ with st.sidebar:
 |------|------|
 | 交易拠点 改善 | TRADE収益 +2金（最大Lv2、Lv2で+4金） |
 | 魔物討伐 改善 | HUNT収益 +1VP（最大Lv2、Lv2で+2VP） |
-| 儀式強化 | RITUAL恩寵獲得 +1（最大Lv2、Lv2で+2恩寵） |
-| 見習い魔女派遣 | 即座にワーカー+1（取得時2金支払い、給料なし） |
+| 祈りの祭壇 強化 | PRAY恩寵獲得 +1（最大Lv2、Lv2で+2恩寵） |
+| 寄付の祭壇 | DONATEアクション解放（2金→1恩寵） |
+| 儀式の祭壇 | RITUALアクション解放（1ワーカー→1恩寵） |
+| 見習い魔女派遣 | 即座にワーカー+2（取得時2金支払い、給料なし） |
 | 育成負担軽減の護符 | 雇用時のコストを軽減 |
 | 魔女カード | 特殊能力を獲得（R3のみ） |
 
@@ -355,13 +359,19 @@ with st.sidebar:
 
     with st.expander("👷 ワーカープレイスメント詳細", expanded=False):
         st.markdown("""
-**アクション効果（レベルアップ後）:**
+**基本アクション（レベルアップ対応）:**
 | アクション | 基本 | Lv1 | Lv2 |
 |-----------|------|-----|-----|
 | **TRADE** | 2金 | 4金 | 6金 |
 | **HUNT** | 1VP | 2VP | 3VP |
 | **RECRUIT** | ワーカー+1 | - | - |
-| **RITUAL** | 3金→2恩寵 | 3金→3恩寵 | 3金→4恩寵 |
+| **PRAY** | 1恩寵 | 2恩寵 | 3恩寵 |
+
+**アップグレードで解放されるアクション:**
+| アクション | 解放条件 | 効果 |
+|-----------|---------|------|
+| **DONATE** | 寄付の祭壇 | 2金消費 → 1恩寵 |
+| **RITUAL** | 儀式の祭壇 | 1ワーカー → 1恩寵 |
 
 **雇用ワーカーの仕組み:**
 - RECRUITで雇用 → 次ラウンドから稼働
@@ -383,11 +393,15 @@ with st.sidebar:
 **恩寵の獲得方法:**
 | 条件 | 獲得量 |
 |------|--------|
-| 儀式アクション | 3金消費 → 2恩寵（Lv0） |
+| 祈りアクション（PRAY） | 1恩寵（Lv0）〜3恩寵（Lv2） |
+| 寄付アクション（DONATE※） | 2金消費 → 1恩寵 |
+| 儀式アクション（RITUAL※） | 1ワーカー → 1恩寵 |
 | 宣言0成功 | +1恩寵 |
 | トリテ0勝 | +1恩寵 |
 | 4位救済（選択時） | +1恩寵 |
 | 《祝福の魔女》 | 毎ラウンド終了時 +1恩寵 |
+
+※ アップグレードで解放が必要
 
 **恩寵の消費:**
 - 手札交換（シール前）: 1恩寵消費で手札1枚をデッキトップと交換
@@ -395,7 +409,6 @@ with st.sidebar:
 **閾値ボーナス（ゲーム終了時）:**
 | 恩寵ポイント | ボーナス |
 |-------------|---------|
-| 5点以上 | +2 VP |
 | 10点以上 | +5 VP |
 | 13点以上 | +8 VP |
 
@@ -424,8 +437,8 @@ with st.sidebar:
 - 同時に切り札が出た場合、親に近い方が勝利
 
 **恩寵ポイント:**
-- 5/10/13点で閾値ボーナス獲得
-- 儀式アクション、宣言0成功、0トリック等で獲得
+- 10/13点で閾値ボーナス獲得
+- 祈り・寄付・儀式アクション、宣言0成功、0トリック等で獲得
         """)
 
     with st.expander("🧙 魔女カード一覧", expanded=False):
@@ -920,6 +933,7 @@ if pending is not None:
         st.subheader(f"👷 ワーカー配置")
         num_workers = context["num_workers"]
         can_use_ritual = context.get("can_use_ritual", False)
+        available_actions = context.get("available_actions", ACTIONS)
 
         st.info(f"{num_workers}人のワーカーにアクションを割り当て")
 
@@ -928,7 +942,9 @@ if pending is not None:
             "TRADE": "💰 交易（金貨を獲得）",
             "HUNT": "⚔️ 討伐（VPを獲得）",
             "RECRUIT": "🧑‍🤝‍🧑 雇用（次ラウンドからワーカー+1）",
-            "RITUAL": "✨ 儀式（3金→恩寵獲得）"
+            "PRAY": "🙏 祈り（恩寵を獲得）",
+            "DONATE": "💝 寄付（2金→1恩寵）",
+            "RITUAL": "✨ 儀式（1恩寵獲得）"
         }
 
         actions = []
@@ -937,7 +953,7 @@ if pending is not None:
             # ラジオボタンで横並び（モバイルでタップしやすく）
             action = st.radio(
                 f"ワーカー{i+1}のアクション",
-                options=ACTIONS,
+                options=available_actions,
                 format_func=lambda x: action_info.get(x, x),
                 key=f"worker_{i}",
                 horizontal=True,
@@ -946,17 +962,17 @@ if pending is not None:
             actions.append(action)
 
         # WITCH_RITUAL: 追加アクション
-        ritual_action = None
+        witch_ritual_action = None
         if can_use_ritual:
             st.divider()
             st.markdown("🔮 **《大儀式の執行者》** - 追加アクション実行可能")
-            use_ritual = st.checkbox("追加アクションを実行する", key="use_ritual")
-            if use_ritual:
-                ritual_action = st.radio(
+            use_witch_ritual = st.checkbox("追加アクションを実行する", key="use_witch_ritual")
+            if use_witch_ritual:
+                witch_ritual_action = st.radio(
                     "追加で実行するアクション:",
-                    options=ACTIONS,
+                    options=available_actions,
                     format_func=lambda x: action_info.get(x, x),
-                    key="ritual_action",
+                    key="witch_ritual_action",
                     horizontal=True
                 )
 
@@ -964,7 +980,7 @@ if pending is not None:
         if st.button("✅ アクション確定", type="primary", use_container_width=True):
             response = {
                 "actions": actions,
-                "ritual_action": ritual_action,
+                "ritual_action": witch_ritual_action,
             }
             game.provide_input(response)
             run_until_input()
