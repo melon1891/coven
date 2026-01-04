@@ -67,12 +67,22 @@ GRACE_THRESHOLD_BONUS = [         # 閾値ボーナス（最高のみ適用）
     (10, 5),  # 10点以上 → +5VP
 ]
 GRACE_HAND_SWAP_COST = 1          # 手札交換コスト
-GRACE_RITUAL_GOLD_COST = 3        # 儀式アクション消費金
-GRACE_RITUAL_GAIN = 2             # 儀式基礎獲得量（Lv0）
+GRACE_PRAY_GAIN = 1               # 祈り基礎獲得量（Lv0）
+GRACE_DONATE_COST = 2             # 寄付アクション消費金
+GRACE_DONATE_GAIN = 1             # 寄付獲得量
+GRACE_RITUAL_GAIN = 1             # 儀式アクション獲得量
 GRACE_DECLARATION_ZERO_BONUS = 1  # 宣言0成功ボーナス
 GRACE_ZERO_TRICKS_BONUS = 1       # トリック0勝ボーナス
 GRACE_4TH_PLACE_BONUS = 1         # 4位救済ボーナス
 ```
+
+### Grace Actions (恩寵アクション)
+
+| アクション | 種別 | 効果 |
+|-----------|------|------|
+| PRAY | 初期アクション | 1ワーカー → 1+pray_level恩寵 |
+| DONATE | UP_DONATEで解放 | 1ワーカー + 2金 → 1恩寵 |
+| RITUAL | UP_RITUALで解放 | 1ワーカー → 1恩寵 |
 
 ### Game Flow (per round)
 
@@ -80,7 +90,7 @@ GRACE_4TH_PLACE_BONUS = 1         # 4位救済ボーナス
 2. **Upgrade Reveal** - アップグレード公開（R3は魔女）
 3. **Trick-Taking** - 宣言→封印1枚→4トリック
 4. **Upgrade Selection** - トリック獲得順に選択
-5. **Worker Placement** - TRADE/HUNT/RECRUIT/RITUAL実行
+5. **Worker Placement** - TRADE/HUNT/RECRUIT/PRAY（+DONATE/RITUAL）実行
 6. **Wage Payment** - 初期ワーカーのみ給料支払い
 
 ### Card Input Format (CLI)
