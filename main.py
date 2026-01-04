@@ -471,7 +471,7 @@ ALL_UPGRADES = [
 
 # 魔女カード（ラウンド3のみ登場）
 ALL_WITCHES = [
-    "WITCH_BLACKROAD",   # 交易強化: TRADEで+1金
+    "WITCH_BLACKROAD",   # 交易強化: TRADEで+2金
     "WITCH_BLOODHUNT",   # 討伐強化: HUNTで+1VP
     "WITCH_HERD",        # 雇用支援: 雇用ラウンド給料-1
     "WITCH_TREASURE",    # 金貨変換: ゲーム終了時1金→1VP
@@ -595,7 +595,7 @@ def upgrade_description(u: str) -> str:
         "UP_PRAY": "【祈り強化】祈りアクションの恩寵獲得+1。最大レベル2まで強化可能（基礎1→Lv1:2→Lv2:3）。",
         "UP_DONATE": "【寄付アクション解放】2金 → 1恩寵に変換可能。金貨を恩寵に変えたいときに。",
         "UP_RITUAL": "【儀式アクション解放】1ワーカー → 1恩寵。ワーカーで追加の恩寵獲得スロットを得る。",
-        "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+1金",
+        "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+2金",
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
         "WITCH_TREASURE": "【効果】ゲーム終了時、1金貨につき1VPに変換可能",
@@ -1458,10 +1458,10 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
     for a in actions:
         if a == "TRADE":
             player.gold += player.trade_yield()
-            # WITCH_BLACKROAD: TRADEで+1金
+            # WITCH_BLACKROAD: TRADEで+2金
             if "WITCH_BLACKROAD" in player.witches:
-                player.gold += 1
-                witch_bonuses.append("黒路の魔女: +1金")
+                player.gold += 2
+                witch_bonuses.append("黒路の魔女: +2金")
         elif a == "HUNT":
             player.vp += player.hunt_yield()
             # WITCH_BLOODHUNT: HUNTで+1VP
@@ -2463,6 +2463,16 @@ def run_single_game_quiet(
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
     vps = [p.vp for p in players_sorted]
     grace_points = [p.grace_points for p in players_sorted]
+
+    # Witch stats: for each player, record witches owned and their ranking
+    witch_stats = []
+    for rank, p in enumerate(players_sorted, start=1):
+        witch_stats.append({
+            "rank": rank,
+            "vp": p.vp,
+            "witches": list(p.witches),
+        })
+
     return {
         "winner": players_sorted[0].name,
         "vps": vps,
@@ -2470,6 +2480,7 @@ def run_single_game_quiet(
         "vp_diff_1st_last": vps[0] - vps[-1],
         "grace_points": grace_points,
         "grace_stats": grace_stats,
+        "witch_stats": witch_stats,
     }
 
 
@@ -2614,7 +2625,7 @@ def choose_actions_smart_bot(
     # TRADEで稼げる額
     trade_yield = player.trade_yield()
     if "WITCH_BLACKROAD" in player.witches:
-        trade_yield += 1
+        trade_yield += 2
 
     # HUNTで稼げるVP
     hunt_yield = player.hunt_yield()
@@ -3003,6 +3014,145 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
     }
 
 
+def run_witch_simulation(num_games: int = 1000) -> Dict[str, Any]:
+    """Run simulation and collect witch balance statistics."""
+    # Track stats per witch
+    witch_names = {
+        "WITCH_BLACKROAD": "《黒路の魔女》",
+        "WITCH_BLOODHUNT": "《血誓の討伐官》",
+        "WITCH_HERD": "《群導の魔女》",
+        "WITCH_TREASURE": "《財宝変換の魔女》",
+        "WITCH_BLESSING": "《祈祷の魔女》",
+    }
+
+    # Initialize stats: for each witch, track VP totals, win count, ownership count
+    witch_data: Dict[str, Dict[str, Any]] = {}
+    for witch_id in witch_names:
+        witch_data[witch_id] = {
+            "name": witch_names[witch_id],
+            "total_vp": 0,
+            "count": 0,
+            "wins": 0,
+            "rank_sum": 0,
+        }
+
+    # Also track players without any witch
+    no_witch_data = {
+        "total_vp": 0,
+        "count": 0,
+        "wins": 0,
+        "rank_sum": 0,
+    }
+
+    # Run games
+    for game_id in range(num_games):
+        seed = game_id * 1000 + 999
+        result = run_single_game_quiet(seed, max_rank=6)
+
+        for player_stat in result["witch_stats"]:
+            rank = player_stat["rank"]
+            vp = player_stat["vp"]
+            witches = player_stat["witches"]
+
+            if len(witches) == 0:
+                no_witch_data["total_vp"] += vp
+                no_witch_data["count"] += 1
+                no_witch_data["rank_sum"] += rank
+                if rank == 1:
+                    no_witch_data["wins"] += 1
+            else:
+                for w in witches:
+                    if w in witch_data:
+                        witch_data[w]["total_vp"] += vp
+                        witch_data[w]["count"] += 1
+                        witch_data[w]["rank_sum"] += rank
+                        if rank == 1:
+                            witch_data[w]["wins"] += 1
+
+    return {
+        "num_games": num_games,
+        "witch_data": witch_data,
+        "no_witch_data": no_witch_data,
+    }
+
+
+def run_all_witch_simulations(num_games: int = 1000):
+    """Run witch balance simulation and print results."""
+    print("=== 魔女バランスシミュレーション ===")
+    print(f"{num_games}ゲーム実行中...\n")
+
+    result = run_witch_simulation(num_games=num_games)
+
+    print("=" * 70)
+    print("=== シミュレーション結果 ===")
+    print("=" * 70)
+
+    print("\n【魔女別統計】")
+    print("-" * 70)
+    print(f"{'魔女名':<20} {'平均VP':>8} {'勝率':>8} {'平均順位':>8} {'所持数':>8}")
+    print("-" * 70)
+
+    witch_data = result["witch_data"]
+    no_witch = result["no_witch_data"]
+
+    # Sort by average VP descending
+    sorted_witches = sorted(
+        witch_data.items(),
+        key=lambda x: x[1]["total_vp"] / x[1]["count"] if x[1]["count"] > 0 else 0,
+        reverse=True
+    )
+
+    for witch_id, data in sorted_witches:
+        if data["count"] > 0:
+            avg_vp = data["total_vp"] / data["count"]
+            win_rate = data["wins"] / data["count"] * 100
+            avg_rank = data["rank_sum"] / data["count"]
+            print(f"{data['name']:<20} {avg_vp:>8.1f} {win_rate:>7.1f}% {avg_rank:>8.2f} {data['count']:>8}")
+
+    # No witch stats
+    if no_witch["count"] > 0:
+        avg_vp = no_witch["total_vp"] / no_witch["count"]
+        win_rate = no_witch["wins"] / no_witch["count"] * 100
+        avg_rank = no_witch["rank_sum"] / no_witch["count"]
+        print("-" * 70)
+        print(f"{'（魔女なし）':<20} {avg_vp:>8.1f} {win_rate:>7.1f}% {avg_rank:>8.2f} {no_witch['count']:>8}")
+
+    print("-" * 70)
+
+    # Balance evaluation
+    print("\n【バランス評価】")
+
+    # Calculate overall stats
+    all_avg_vp = []
+    for witch_id, data in witch_data.items():
+        if data["count"] > 0:
+            all_avg_vp.append(data["total_vp"] / data["count"])
+
+    if all_avg_vp:
+        overall_avg = sum(all_avg_vp) / len(all_avg_vp)
+        vp_range = max(all_avg_vp) - min(all_avg_vp)
+
+        print(f"  魔女間VP差: {vp_range:.1f}VP (平均: {overall_avg:.1f}VP)")
+
+        if vp_range <= 3:
+            print("  ✓ 魔女間のバランスは良好です（VP差3以下）")
+        elif vp_range <= 5:
+            print("  △ 魔女間にやや差があります（VP差3-5）")
+        else:
+            print("  ⚠️ 魔女間のバランスに問題があります（VP差5超）")
+
+        # Check if any witch is too strong or too weak
+        for witch_id, data in witch_data.items():
+            if data["count"] > 0:
+                avg = data["total_vp"] / data["count"]
+                if avg > overall_avg + 3:
+                    print(f"  ⚠️ {data['name']}が強すぎる可能性 (+{avg - overall_avg:.1f}VP)")
+                elif avg < overall_avg - 3:
+                    print(f"  ⚠️ {data['name']}が弱すぎる可能性 ({avg - overall_avg:.1f}VP)")
+
+    print("\n" + "=" * 70)
+
+
 def run_all_grace_simulations(num_games: int = 1000):
     """Run grace point system analysis simulation."""
     print("=== 恩寵ポイントシステム分析シミュレーション ===")
@@ -3104,6 +3254,7 @@ if __name__ == "__main__":
     parser.add_argument("--simulate-deck", action="store_true", help="Run deck/trump count optimization simulation")
     parser.add_argument("--simulate-debt-penalty", action="store_true", help="Run debt penalty optimization simulation")
     parser.add_argument("--simulate-grace", action="store_true", help="Run grace point system simulation")
+    parser.add_argument("--simulate-witch", action="store_true", help="Run witch balance simulation")
     parser.add_argument("--auto", action="store_true", help="Run automated game with 4 bots (for CI testing)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for --auto mode")
     args = parser.parse_args()
@@ -3117,6 +3268,8 @@ if __name__ == "__main__":
             run_all_debt_penalty_simulations()
         elif args.simulate_grace:
             run_all_grace_simulations()
+        elif args.simulate_witch:
+            run_all_witch_simulations()
         elif args.auto:
             result = run_auto_game(seed=args.seed)
             sys.exit(0 if result["success"] else 1)
