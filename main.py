@@ -476,6 +476,8 @@ ALL_WITCHES = [
     "WITCH_HERD",        # 雇用支援: 雇用ラウンド給料-1
     "WITCH_TREASURE",    # 金貨変換: ゲーム終了時1金→1恩寵
     "WITCH_BLESSING",    # 祈り強化: PRAYで+1恩寵
+    "WITCH_PROPHET",     # 的中の魔女: 宣言成功時+1金
+    "WITCH_ZERO_MASTER", # 慎重な予言者: 宣言0成功時+2恩寵（通常+1）
 ]
 
 # デフォルトで有効なアップグレード（魔女を除く）
@@ -502,6 +504,8 @@ WITCH_POOL_COUNTS = {
     "WITCH_HERD": 1,
     "WITCH_TREASURE": 1,
     "WITCH_BLESSING": 1,
+    "WITCH_PROPHET": 1,
+    "WITCH_ZERO_MASTER": 1,
 }
 
 
@@ -581,6 +585,8 @@ def upgrade_name(u: str) -> str:
         "WITCH_HERD": "《群導の魔女》",
         "WITCH_TREASURE": "《財宝変換の魔女》",
         "WITCH_BLESSING": "《祈祷の魔女》",
+        "WITCH_PROPHET": "《的中の魔女》",
+        "WITCH_ZERO_MASTER": "《慎重な予言者》",
     }
     return mapping.get(u, u)
 
@@ -600,6 +606,8 @@ def upgrade_description(u: str) -> str:
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
         "WITCH_TREASURE": "【効果】ゲーム終了時、1金貨につき1恩寵に変換可能",
         "WITCH_BLESSING": "【効果】PRAYを行うたび、追加で+1恩寵",
+        "WITCH_PROPHET": "【効果】宣言成功時、追加で+1金",
+        "WITCH_ZERO_MASTER": "【効果】宣言0成功時、+2恩寵（通常+1の代わり）",
     }
     return descriptions.get(u, "説明なし")
 
@@ -635,6 +643,18 @@ WITCH_FLAVOR = {
 
 彼女の祈りは、誰よりも深く協会に届く。
 祈る者に力を与え、恩寵の道を開く。""",
+
+    "WITCH_PROPHET": """《的中の魔女》
+役割：予言・トリック宣言強化
+
+彼女の予言は必ず当たる。
+宣言を成功させた者に、金貨という形で報いを与える。""",
+
+    "WITCH_ZERO_MASTER": """《慎重な予言者》
+役割：慎重な戦略・恩寵獲得
+
+何も取らないと宣言し、それを守る者を彼女は讃える。
+慎重な戦いこそが、最も恩寵に近い道だと知っているから。""",
 }
 
 
@@ -902,12 +922,24 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
             p.vp += DECLARATION_BONUS_VP
             print(f"宣言成功: {p.name} が {p.declared_tricks} トリックを的中 -> +{DECLARATION_BONUS_VP} VP")
 
+            # WITCH_PROPHET: 宣言成功時+1金
+            gold_bonus = 0
+            if "WITCH_PROPHET" in p.witches:
+                gold_bonus = 1
+                p.gold += gold_bonus
+                print(f"  (《的中の魔女》効果: +{gold_bonus}金)")
+
             # 恩寵システム: 宣言0成功で恩寵ボーナス
             grace_bonus = 0
             if GRACE_ENABLED and p.declared_tricks == 0:
-                grace_bonus = GRACE_DECLARATION_ZERO_BONUS
+                # WITCH_ZERO_MASTER: 宣言0成功時+2恩寵（通常+1の代わり）
+                if "WITCH_ZERO_MASTER" in p.witches:
+                    grace_bonus = 2
+                    print(f"  (《慎重な予言者》効果: +{grace_bonus}恩寵)")
+                else:
+                    grace_bonus = GRACE_DECLARATION_ZERO_BONUS
+                    print(f"  (宣言0成功ボーナス: +{grace_bonus} 恩寵)")
                 p.grace_points += grace_bonus
-                print(f"  (宣言0成功ボーナス: +{grace_bonus} 恩寵)")
 
             if logger:
                 logger.log("declaration_bonus", {
@@ -919,6 +951,7 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
                     "vp_after": p.vp,
                     "bonus_vp": DECLARATION_BONUS_VP,
                     "grace_bonus": grace_bonus,
+                    "gold_bonus": gold_bonus,
                 })
 
     # 恩寵システム: トリテ0勝で恩寵ボーナス（宣言0成功とは別）
@@ -2263,10 +2296,19 @@ class GameEngine:
             if p.tricks_won_this_round == p.declared_tricks:
                 p.vp += bonus_vp
                 self._log(f"宣言成功: {p.name} が {p.declared_tricks} を的中 -> +{bonus_vp} VP")
+                # WITCH_PROPHET: 宣言成功時+1金
+                if "WITCH_PROPHET" in p.witches:
+                    p.gold += 1
+                    self._log(f"  (《的中の魔女》効果: +1金)")
                 # 宣言0成功で恩寵ボーナス
                 if GRACE_ENABLED and p.declared_tricks == 0:
-                    p.grace_points += GRACE_DECLARATION_ZERO_BONUS
-                    self._log(f"  (宣言0成功ボーナス: +{GRACE_DECLARATION_ZERO_BONUS} 恩寵)")
+                    # WITCH_ZERO_MASTER: 宣言0成功時+2恩寵（通常+1の代わり）
+                    if "WITCH_ZERO_MASTER" in p.witches:
+                        p.grace_points += 2
+                        self._log(f"  (《慎重な予言者》効果: +2恩寵)")
+                    else:
+                        p.grace_points += GRACE_DECLARATION_ZERO_BONUS
+                        self._log(f"  (宣言0成功ボーナス: +{GRACE_DECLARATION_ZERO_BONUS} 恩寵)")
 
     def _finish_game(self):
         """Finalize game and determine winner."""
@@ -2400,9 +2442,16 @@ def run_single_game_quiet(
         for p in players:
             if p.tricks_won_this_round == p.declared_tricks:
                 p.vp += DECLARATION_BONUS_VP
+                # WITCH_PROPHET: 宣言成功時+1金
+                if "WITCH_PROPHET" in p.witches:
+                    p.gold += 1
                 # 宣言0成功で恩寵ボーナス
                 if GRACE_ENABLED and p.declared_tricks == 0:
-                    p.grace_points += GRACE_DECLARATION_ZERO_BONUS
+                    # WITCH_ZERO_MASTER: 宣言0成功時+2恩寵（通常+1の代わり）
+                    if "WITCH_ZERO_MASTER" in p.witches:
+                        p.grace_points += 2
+                    else:
+                        p.grace_points += GRACE_DECLARATION_ZERO_BONUS
 
         # 0トリックボーナス（宣言に関わらず0勝で恩寵獲得）
         if GRACE_ENABLED:
@@ -3046,6 +3095,8 @@ def run_witch_simulation(num_games: int = 1000) -> Dict[str, Any]:
         "WITCH_HERD": "《群導の魔女》",
         "WITCH_TREASURE": "《財宝変換の魔女》",
         "WITCH_BLESSING": "《祈祷の魔女》",
+        "WITCH_PROPHET": "《的中の魔女》",
+        "WITCH_ZERO_MASTER": "《慎重な予言者》",
     }
 
     # Initialize stats: for each witch, track VP totals, win count, ownership count
