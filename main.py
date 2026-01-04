@@ -287,9 +287,6 @@ class Player:
     # Permanent witches (flavor for tie-break)
     witches: List[str] = field(default_factory=list)
 
-    # Witch ability usage this round
-    ritual_used_this_round: bool = False  # WITCH_RITUAL: アクション再実行
-
     # Grace points (恩寵ポイント)
     grace_points: int = 0
 
@@ -474,13 +471,11 @@ ALL_UPGRADES = [
 
 # 魔女カード（ラウンド3のみ登場）
 ALL_WITCHES = [
-    "WITCH_BLACKROAD",
-    "WITCH_BLOODHUNT",
-    "WITCH_HERD",
-    "WITCH_RITUAL",
-    "WITCH_BARRIER",
-    "WITCH_TREASURE",  # 新魔女: ゲーム終了時1金→1VP変換
-    "WITCH_BLESSING",  # 祝福の魔女: 毎ラウンド終了時に恩寵+1
+    "WITCH_BLACKROAD",   # 交易強化: TRADEで+1金
+    "WITCH_BLOODHUNT",   # 討伐強化: HUNTで+1VP
+    "WITCH_HERD",        # 雇用支援: 雇用ラウンド給料-1
+    "WITCH_TREASURE",    # 金貨変換: ゲーム終了時1金→1VP
+    "WITCH_BLESSING",    # 祈り強化: PRAYで+1恩寵
 ]
 
 # デフォルトで有効なアップグレード（魔女を除く）
@@ -505,10 +500,8 @@ WITCH_POOL_COUNTS = {
     "WITCH_BLACKROAD": 1,
     "WITCH_BLOODHUNT": 1,
     "WITCH_HERD": 1,
-    "WITCH_RITUAL": 1,
-    "WITCH_BARRIER": 1,
     "WITCH_TREASURE": 1,
-    "WITCH_BLESSING": 1,  # 祝福の魔女
+    "WITCH_BLESSING": 1,
 }
 
 
@@ -586,10 +579,8 @@ def upgrade_name(u: str) -> str:
         "WITCH_BLACKROAD": "《黒路の魔女》",
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
         "WITCH_HERD": "《群導の魔女》",
-        "WITCH_RITUAL": "《大儀式の執行者》",
-        "WITCH_BARRIER": "《結界織りの魔女》",
         "WITCH_TREASURE": "《財宝変換の魔女》",
-        "WITCH_BLESSING": "《祝福の魔女》",
+        "WITCH_BLESSING": "《祈祷の魔女》",
     }
     return mapping.get(u, u)
 
@@ -607,10 +598,8 @@ def upgrade_description(u: str) -> str:
         "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+1金",
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
-        "WITCH_RITUAL": "【効果】各ラウンド1回、選んだ基本アクションをもう一度実行",
-        "WITCH_BARRIER": "【効果】各ラウンド最初にHUNTを行った場合、追加で+1VP",
         "WITCH_TREASURE": "【効果】ゲーム終了時、1金貨につき1VPに変換可能",
-        "WITCH_BLESSING": "【効果】毎ラウンド終了時に恩寵+1点を獲得",
+        "WITCH_BLESSING": "【効果】PRAYを行うたび、追加で+1恩寵",
     }
     return descriptions.get(u, "説明なし")
 
@@ -635,30 +624,17 @@ WITCH_FLAVOR = {
 見習いたちは彼女の合図ひとつで動く。
 だが、誰も彼女に逆らおうとはしない。""",
 
-    "WITCH_RITUAL": """《大儀式の執行者》
-役割：爆発力・借金前提
-
-協会が「許可した」時にのみ執り行われる儀式。
-成功すれば村は救われる。
-失敗の記録は、協会の文書には残らない。""",
-
-    "WITCH_BARRIER": """《結界織りの魔女》
-役割：防衛・条件付きVP
-
-結界は村を守る。
-同時に、外へ出ることも難しくする。""",
-
     "WITCH_TREASURE": """《財宝変換の魔女》
 役割：終盤・金貨活用
 
 彼女の魔法は、金貨の価値を高める。
 だが、その代償を知る者は少ない。""",
 
-    "WITCH_BLESSING": """《祝福の魔女》
-役割：恩寵獲得・長期戦略
+    "WITCH_BLESSING": """《祈祷の魔女》
+役割：祈り強化・恩寵獲得
 
-協会への忠誠を示す者に、彼女は静かに恩寵を与える。
-その祝福は目に見えないが、確かに存在する。""",
+彼女の祈りは、誰よりも深く協会に届く。
+祈る者に力を与え、恩寵の道を開く。""",
 }
 
 
@@ -1213,7 +1189,6 @@ def run_trick_taking(
 
     for p in players:
         p.tricks_won_this_round = 0
-        p.ritual_used_this_round = False
 
     full_hands: Dict[str, List[Card]] = {p.name: players[i].sets[set_index][:] for i, p in enumerate(players)}
 
@@ -1477,7 +1452,6 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
 def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
     before = {"gold": player.gold, "vp": player.vp, "new_hires": player.basic_workers_new_hires,
               "grace_points": player.grace_points}
-    first_hunt_done = False  # Track for WITCH_BARRIER
     witch_bonuses: List[str] = []
     grace_bonuses: List[str] = []
 
@@ -1494,17 +1468,16 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
             if "WITCH_BLOODHUNT" in player.witches:
                 player.vp += 1
                 witch_bonuses.append("血誓の討伐官: +1VP")
-            # WITCH_BARRIER: 最初のHUNTで+1VP
-            if not first_hunt_done and "WITCH_BARRIER" in player.witches:
-                player.vp += 1
-                witch_bonuses.append("結界織りの魔女: +1VP (初回HUNT)")
-            first_hunt_done = True
         elif a == "RECRUIT":
             player.basic_workers_new_hires += 1
         elif a == "PRAY":
             # 祈りアクション: ワーカー配置で恩寵獲得
             if GRACE_ENABLED:
                 pray_gain = player.pray_yield()
+                # WITCH_BLESSING: PRAYで+1恩寵
+                if "WITCH_BLESSING" in player.witches:
+                    pray_gain += 1
+                    witch_bonuses.append("祈祷の魔女: +1恩寵")
                 player.grace_points += pray_gain
                 grace_bonuses.append(f"祈り(Lv{player.pray_level}): +{pray_gain}恩寵")
         elif a == "DONATE":
@@ -1807,18 +1780,6 @@ def main():
                     "activated": activated,
                 })
 
-        # WITCH_BLESSING: 毎ラウンド終了時に恩寵+1
-        if GRACE_ENABLED:
-            for p in players:
-                if "WITCH_BLESSING" in p.witches:
-                    p.grace_points += 1
-                    print(f"《祝福の魔女》: {p.name} が +1 恩寵を獲得")
-                    logger.log("witch_blessing_grace", {
-                        "round": round_no + 1,
-                        "player": p.name,
-                        "grace_points": p.grace_points,
-                    })
-
         logger.log("round_end", {"round": round_no + 1, "players": snapshot_players(players)})
 
     # 恩寵ポイント閾値ボーナス（ゲーム終了時）
@@ -2011,20 +1972,11 @@ class GameEngine:
             self._pending_input = None
 
         elif req_type == "worker_actions":
-            # response can be list of actions or dict with additional witch abilities
+            # response can be list of actions or dict with additional options
             if isinstance(response, dict):
                 actions = response.get("actions", [])
-                ritual_action = response.get("ritual_action")
-
-                # Resolve main actions
                 delta = resolve_actions(player, actions)
                 self._log(f"{player.name} アクション: {actions}")
-
-                # Apply WITCH_RITUAL (extra action)
-                if ritual_action:
-                    extra_delta = resolve_actions(player, [ritual_action])
-                    player.ritual_used_this_round = True
-                    self._log(f"  《大儀式の執行者》: 追加{ritual_action}")
             else:
                 # Backward compatibility: response is just a list
                 actions = response
@@ -2060,7 +2012,6 @@ class GameEngine:
 
             for p in self.players:
                 p.tricks_won_this_round = 0
-                p.ritual_used_this_round = False
 
             # ラウンドごとにカードを配る（デッキをリシャッフル）
             round_hands, self.remaining_deck = deal_round_cards(
@@ -2197,7 +2148,6 @@ class GameEngine:
                     context={
                         "num_workers": player.basic_workers_total,
                         "witches": player.witches[:],
-                        "can_use_ritual": "WITCH_RITUAL" in player.witches and not player.ritual_used_this_round,
                         "available_actions": get_available_actions(player),
                     }
                 )
@@ -2476,12 +2426,6 @@ def run_single_game_quiet(
         # Wage payment
         for p in players:
             pay_wages_and_debt(p, round_no)
-
-        # WITCH_BLESSINGによる恩寵獲得
-        if GRACE_ENABLED:
-            for p in players:
-                if "WITCH_BLESSING" in p.witches:
-                    p.grace_points += 1
 
         # Activate hires
         for p in players:

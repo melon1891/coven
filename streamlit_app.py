@@ -399,7 +399,7 @@ with st.sidebar:
 | 宣言0成功 | +1恩寵 |
 | トリテ0勝 | +1恩寵 |
 | 4位救済（選択時） | +1恩寵 |
-| 《祝福の魔女》 | 毎ラウンド終了時 +1恩寵 |
+| 《祈祷の魔女》 | PRAY実行時 +1恩寵（追加） |
 
 ※ アップグレードで解放が必要
 
@@ -458,19 +458,14 @@ with st.sidebar:
 > *見習いたちは彼女の合図ひとつで動く。*
 
 ---
-**《大儀式の執行者》** - アクション倍化
-> 各ラウンド1回、選んだ基本アクションをもう一度実行
-> *協会が「許可した」時にのみ執り行われる儀式。*
+**《財宝変換の魔女》** - 金貨活用
+> ゲーム終了時、1金貨につき1VPに変換可能
+> *彼女の魔法は、金貨の価値を高める。*
 
 ---
-**《結界織りの魔女》** - 条件付きVP
-> 各ラウンド最初にHUNTを行った場合、追加で+1VP
-> *結界は村を守る。同時に、外へ出ることも難しくする。*
-
----
-**《祝福の魔女》** - 恩寵獲得
-> 毎ラウンド終了時に恩寵+1点を獲得
-> *協会への忠誠を示す者に、彼女は静かに恩寵を与える。*
+**《祈祷の魔女》** - 祈り強化
+> PRAYを行うたび、追加で+1恩寵
+> *彼女の祈りは、誰よりも深く協会に届く。*
         """)
 
     st.divider()
@@ -733,7 +728,7 @@ for row in range(2):
             # Show witches (タップで効果表示)
             if p.get("witches"):
                 witch_short = {"WITCH_BLACKROAD": "黒路", "WITCH_BLOODHUNT": "血誓", "WITCH_HERD": "群導",
-                              "WITCH_RITUAL": "大儀式", "WITCH_BARRIER": "結界"}
+                              "WITCH_TREASURE": "財宝", "WITCH_BLESSING": "祈祷"}
                 witch_cols = st.columns(len(p["witches"]))
                 for wi, w in enumerate(p["witches"]):
                     with witch_cols[wi]:
@@ -932,7 +927,6 @@ if pending is not None:
     elif req_type == "worker_actions":
         st.subheader(f"👷 ワーカー配置")
         num_workers = context["num_workers"]
-        can_use_ritual = context.get("can_use_ritual", False)
         available_actions = context.get("available_actions", ACTIONS)
 
         st.info(f"{num_workers}人のワーカーにアクションを割り当て")
@@ -961,26 +955,10 @@ if pending is not None:
             )
             actions.append(action)
 
-        # WITCH_RITUAL: 追加アクション
-        witch_ritual_action = None
-        if can_use_ritual:
-            st.divider()
-            st.markdown("🔮 **《大儀式の執行者》** - 追加アクション実行可能")
-            use_witch_ritual = st.checkbox("追加アクションを実行する", key="use_witch_ritual")
-            if use_witch_ritual:
-                witch_ritual_action = st.radio(
-                    "追加で実行するアクション:",
-                    options=available_actions,
-                    format_func=lambda x: action_info.get(x, x),
-                    key="witch_ritual_action",
-                    horizontal=True
-                )
-
         st.divider()
         if st.button("✅ アクション確定", type="primary", use_container_width=True):
             response = {
                 "actions": actions,
-                "ritual_action": witch_ritual_action,
             }
             game.provide_input(response)
             run_until_input()
