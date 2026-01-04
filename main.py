@@ -77,7 +77,7 @@ GRACE_DECLARATION_ZERO_BONUS = 1
 # 恩寵獲得: トリテ0勝
 GRACE_ZERO_TRICKS_BONUS = 1
 # 4位ボーナス: 恩寵選択時の獲得量
-GRACE_4TH_PLACE_BONUS = 1
+GRACE_4TH_PLACE_BONUS = 2
 # 後出し権: トリック中に順番を最後に変更（1ラウンド1回）
 GRACE_LAST_PLAY_COST = 2
 # 負債軽減: 恩寵消費で負債1を消去

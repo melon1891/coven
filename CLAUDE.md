@@ -73,7 +73,7 @@ GRACE_DONATE_GAIN = 1             # 寄付獲得量
 GRACE_RITUAL_GAIN = 1             # 儀式アクション獲得量
 GRACE_DECLARATION_ZERO_BONUS = 1  # 宣言0成功ボーナス
 GRACE_ZERO_TRICKS_BONUS = 1       # トリック0勝ボーナス
-GRACE_4TH_PLACE_BONUS = 1         # 4位救済ボーナス
+GRACE_4TH_PLACE_BONUS = 2         # 4位救済ボーナス
 ```
 
 ### Grace Actions (恩寵アクション)
