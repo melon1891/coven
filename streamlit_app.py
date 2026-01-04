@@ -728,7 +728,7 @@ for row in range(2):
                             st.markdown(f"**{upgrade_name(w)}**")
                             st.write(upgrade_description(w))
             # Show declaration info during trick phase
-            if p.get("declared_tricks", 0) > 0 or p.get("tricks_won", 0) > 0:
+            if "declared_tricks" in p:
                 st.markdown(f"🎯 宣言 {p['declared_tricks']} / 獲得 {p['tricks_won']}")
 
 # Revealed Upgrades display（2列表示でモバイル対応）
@@ -796,8 +796,8 @@ if pending is not None:
         st.divider()
         declared = st.selectbox(
             "何トリック取る？",
-            options=list(range(1, TRICKS_PER_ROUND + 1)),
-            index=1
+            options=list(range(0, TRICKS_PER_ROUND + 1)),
+            index=2
         )
         if st.button("🎯 宣言する", type="primary", use_container_width=True):
             game.provide_input(declared)

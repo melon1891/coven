@@ -2223,6 +2223,10 @@ class GameEngine:
             if p.tricks_won_this_round == p.declared_tricks:
                 p.vp += bonus_vp
                 self._log(f"宣言成功: {p.name} が {p.declared_tricks} を的中 -> +{bonus_vp} VP")
+                # 宣言0成功で恩寵ボーナス
+                if GRACE_ENABLED and p.declared_tricks == 0:
+                    p.grace_points += GRACE_DECLARATION_ZERO_BONUS
+                    self._log(f"  (宣言0成功ボーナス: +{GRACE_DECLARATION_ZERO_BONUS} 恩寵)")
 
     def _finish_game(self):
         """Finalize game and determine winner."""
