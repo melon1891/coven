@@ -75,7 +75,7 @@ GRACE_ZERO_TRICKS_BONUS = 1
 # 4位ボーナス: 恩寵選択時の獲得量
 GRACE_4TH_PLACE_BONUS = 1
 
-ACTIONS = ["TRADE", "HUNT", "RECRUIT"]
+ACTIONS = ["TRADE", "HUNT", "RECRUIT", "RITUAL"]
 
 # === CPU性格定義 ===
 # grace_awareness: 恩寵獲得の意識（0=無関心, 0.5=適度, 1=積極的）
@@ -274,8 +274,8 @@ class Player:
     # Recruit upgrades (pick one of them, overwrite allowed)
     recruit_upgrade: Optional[str] = None  # "RECRUIT_WAGE_DISCOUNT" or None
 
-    # Ritual upgrade (恩寵システム用)
-    has_ritual: bool = False  # UP_RITUAL取得済みかどうか
+    # Ritual upgrade (恩寵システム用) - アップグレード可能（0-2レベル）
+    ritual_level: int = 0  # 基礎レベル0から開始、UP_RITUALでレベルアップ
 
     # Permanent witches (flavor for tie-break)
     witches: List[str] = field(default_factory=list)
@@ -298,6 +298,10 @@ class Player:
 
     def hunt_yield(self) -> int:
         return 1 + self.hunt_level
+
+    def ritual_yield(self) -> int:
+        """儀式アクションで獲得する恩寵ポイント（Lv0=2, Lv1=3, Lv2=4）"""
+        return 2 + self.ritual_level
 
     def permanent_witch_count(self) -> int:
         return len(self.witches)
@@ -322,7 +326,8 @@ def snapshot_players(players: List[Player]) -> List[Dict[str, Any]]:
             "trade_yield": p.trade_yield(),
             "hunt_yield": p.hunt_yield(),
             "recruit_upgrade": p.recruit_upgrade,
-            "has_ritual": p.has_ritual,  # 儀式の祭壇取得済み
+            "ritual_level": p.ritual_level,  # 儀式レベル（0-2）
+            "ritual_yield": p.ritual_yield(),  # 儀式の獲得恩寵
             "witches": p.witches[:],
             "declared_tricks": p.declared_tricks,
             "tricks_won": p.tricks_won_this_round,
@@ -562,7 +567,7 @@ def upgrade_name(u: str) -> str:
         "UP_HUNT": "魔物討伐 改善（レベル+1）",
         "RECRUIT_INSTANT": "見習い魔女派遣（2金で+2人）",
         "RECRUIT_WAGE_DISCOUNT": "育成負担軽減の護符（雇用ターン給料軽減）",
-        "UP_RITUAL": "儀式の祭壇（金貨→恩寵）",
+        "UP_RITUAL": "儀式の祭壇 強化（レベル+1）",
         "WITCH_BLACKROAD": "《黒路の魔女》",
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
         "WITCH_HERD": "《群導の魔女》",
@@ -581,7 +586,7 @@ def upgrade_description(u: str) -> str:
         "UP_HUNT": "討伐アクションの獲得VPが+1増加します。最大レベル2まで強化可能。",
         "RECRUIT_INSTANT": "2金支払い、即座に見習い2人を獲得。以後給料支払い不要。",
         "RECRUIT_WAGE_DISCOUNT": "雇用したターンの給料支払いが軽減されます。",
-        "UP_RITUAL": f"【儀式アクション】{GRACE_RITUAL_GOLD_COST}金貨を支払い、恩寵{GRACE_RITUAL_GAIN}点を獲得。",
+        "UP_RITUAL": f"【儀式強化】儀式アクションの恩寵獲得+1。最大レベル2まで強化可能（基礎2→Lv1:3→Lv2:4）。",
         "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+1金",
         "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
         "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
@@ -646,8 +651,8 @@ def can_take_upgrade(player: Player, u: str) -> bool:
     if u == "UP_HUNT":
         return player.hunt_level < 2
     if u == "UP_RITUAL":
-        # 儀式はテストモードのみ、かつ未取得の場合のみ取得可能
-        return GRACE_TEST_MODE and not player.has_ritual
+        # 儀式はテストモードのみ、かつレベル2未満の場合のみ取得可能
+        return GRACE_TEST_MODE and player.ritual_level < 2
     return True
 
 
@@ -664,8 +669,8 @@ def apply_upgrade(player: Player, u: str) -> None:
     elif u == "RECRUIT_WAGE_DISCOUNT":
         player.recruit_upgrade = u
     elif u == "UP_RITUAL":
-        # 儀式の祭壇を取得（RITUALアクションが使用可能になる）
-        player.has_ritual = True
+        # 儀式の祭壇をアップグレード（恩寵獲得量+1）
+        player.ritual_level = min(2, player.ritual_level + 1)
     elif u.startswith("WITCH_"):
         player.witches.append(u)
 
@@ -1309,10 +1314,8 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
     n = player.basic_workers_total
     actions: List[str] = []
 
-    # 利用可能なアクションを決定
+    # 利用可能なアクションを決定（RITUALは最初から使用可能）
     available_actions = ACTIONS[:]
-    if GRACE_TEST_MODE and player.has_ritual:
-        available_actions = ACTIONS + ["RITUAL"]
 
     if player.is_bot:
         strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
@@ -1332,7 +1335,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
 
         for _ in range(n):
             # 恩寵特化: 儀式を積極的に選択
-            if (GRACE_TEST_MODE and player.has_ritual and
+            if (GRACE_TEST_MODE and
                 strat.get('prefer_grace', False) and
                 current_gold >= GRACE_RITUAL_GOLD_COST + max(0, expected_wage - 2)):
                 actions.append("RITUAL")
@@ -1340,7 +1343,7 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                 continue
 
             # 全性格共通: 閾値に近い場合、grace_awarenessに応じて儀式を選択
-            if (GRACE_TEST_MODE and player.has_ritual and
+            if (GRACE_TEST_MODE and
                 grace_near_threshold and
                 current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
                 player.rng.random() < grace_awareness * 0.6):  # grace_awareness×60%で儀式
@@ -1348,8 +1351,8 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
                 current_gold -= GRACE_RITUAL_GOLD_COST
                 continue
 
-            # ボットの儀式選択: 金貨に余裕があり、儀式が可能な場合、一定確率で選択
-            if (GRACE_TEST_MODE and player.has_ritual and
+            # ボットの儀式選択: 金貨に余裕があり、一定確率で選択
+            if (GRACE_TEST_MODE and
                 current_gold >= GRACE_RITUAL_GOLD_COST + expected_wage and
                 player.rng.random() < grace_awareness * 0.3):  # grace_awareness×30%で儀式
                 actions.append("RITUAL")
@@ -1390,8 +1393,8 @@ def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
         return actions
 
     print(f"\n{player.name} {n}人の見習いにアクションを割り当てます。")
-    if GRACE_TEST_MODE and player.has_ritual:
-        print(f"  (儀式の祭壇あり: RITUAL選択可能 - {GRACE_RITUAL_GOLD_COST}金→{GRACE_RITUAL_GAIN}恩寵)")
+    if GRACE_TEST_MODE:
+        print(f"  (儀式アクション: {GRACE_RITUAL_GOLD_COST}金→{player.ritual_yield()}恩寵 [Lv{player.ritual_level}])")
     for i in range(n):
         a = prompt_choice(f" ワーカー{i+1}のアクション", available_actions, default="TRADE")
         actions.append(a)
@@ -1426,12 +1429,13 @@ def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
         elif a == "RECRUIT":
             player.basic_workers_new_hires += 1
         elif a == "RITUAL":
-            # 儀式アクション: 金貨を恩寵に変換（テストモード用）
-            if GRACE_TEST_MODE and player.has_ritual:
+            # 儀式アクション: 金貨を恩寵に変換（テストモード用、全員使用可能）
+            if GRACE_TEST_MODE:
                 if player.gold >= GRACE_RITUAL_GOLD_COST:
+                    ritual_gain = player.ritual_yield()
                     player.gold -= GRACE_RITUAL_GOLD_COST
-                    player.grace_points += GRACE_RITUAL_GAIN
-                    grace_bonuses.append(f"儀式: -{GRACE_RITUAL_GOLD_COST}金 → +{GRACE_RITUAL_GAIN}恩寵")
+                    player.grace_points += ritual_gain
+                    grace_bonuses.append(f"儀式(Lv{player.ritual_level}): -{GRACE_RITUAL_GOLD_COST}金 → +{ritual_gain}恩寵")
         else:
             raise ValueError(f"Unknown action: {a}")
 
