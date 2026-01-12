@@ -486,10 +486,18 @@ with st.sidebar:
             "enabled_upgrades": DEFAULT_ENABLED_UPGRADES[:],
         }
 
-    # ゲームモード表示（6ラウンド固定）
-    st.subheader("🎮 ゲームモード")
-    st.info(f"📅 {ROUNDS}ラウンド（スタンダード）")
-    st.session_state.game_config["rounds"] = ROUNDS
+    with st.expander("🎲 ゲームモード", expanded=False):
+        rounds_options = [4, 6, 8]
+        current_rounds = st.session_state.game_config.get("rounds", ROUNDS)
+        rounds_index = rounds_options.index(current_rounds) if current_rounds in rounds_options else 1
+        st.session_state.game_config["rounds"] = st.radio(
+            "ラウンド数",
+            options=rounds_options,
+            index=rounds_index,
+            format_func=lambda x: f"{x}ラウンド（{'ショート' if x == 4 else 'スタンダード' if x == 6 else 'ロング'}）",
+            help="4ラウンド: 短時間プレイ、6ラウンド: スタンダード、8ラウンド: 長期戦略",
+            horizontal=True
+        )
 
     with st.expander("💰 初期リソース", expanded=False):
         st.session_state.game_config["start_gold"] = st.number_input(
@@ -593,8 +601,9 @@ with st.sidebar:
     with st.expander("📋 現在の設定値", expanded=False):
         config = st.session_state.game_config
         enabled_count = len(config.get("enabled_upgrades", ALL_UPGRADES))
+        rounds_setting = config.get("rounds", ROUNDS)
         st.markdown(f"""
-        - **ゲームモード**: {ROUNDS}ラウンド（スタンダード）
+        - **ラウンド数**: {rounds_setting}R（{'ショート' if rounds_setting == 4 else 'スタンダード' if rounds_setting == 6 else 'ロング'}）
         - **初期金貨**: {config['start_gold']}G
         - **初期ワーカー**: {config['initial_workers']}人
         - **宣言ボーナス**: +{config['declaration_bonus_vp']}VP
@@ -632,6 +641,7 @@ def init_game():
             take_gold_instead=cfg["take_gold_instead"],
             rescue_gold_for_4th=cfg["rescue_gold_for_4th"],
             enabled_upgrades=enabled,
+            rounds=cfg.get("rounds", ROUNDS),
         )
     else:
         config = GameConfig()
