@@ -2020,6 +2020,7 @@ class GameEngine:
         self.remaining_deck: List[Card] = []  # ラウンド配札後の残りデッキ
         self.current_trick = 0
         self.trick_plays: List[Tuple[Player, Card]] = []
+        self.last_trick_plays: List[Tuple[Player, Card]] = []  # 直前のトリックのプレイ（表示用）
         self.lead_card: Optional[Card] = None
         self.trick_leader = 0
         self.trick_player_offset = 0
@@ -2041,6 +2042,8 @@ class GameEngine:
 
     def get_state(self) -> Dict[str, Any]:
         """Return current game state for display."""
+        # 現在のトリックが空なら直前のトリックを表示用に返す
+        display_plays = self.trick_plays if self.trick_plays else self.last_trick_plays
         return {
             "round_no": self.round_no,
             "phase": self.phase,
@@ -2049,6 +2052,7 @@ class GameEngine:
             "revealed_upgrades": self.revealed_upgrades[:],
             "trick_history": self.trick_history[:],
             "current_trick": self.current_trick,
+            "current_trick_plays": [(p.name, c) for p, c in display_plays],
             "sealed_by_player": {name: [str(c) for c in cards] for name, cards in self.sealed_by_player.items()},
             "log": self.log_messages[-20:],  # Last 20 messages
             "game_over": self.phase == "game_end",
@@ -2440,6 +2444,7 @@ class GameEngine:
 
     def _start_trick(self):
         """Initialize a new trick."""
+        self.last_trick_plays = self.trick_plays[:]  # 直前のトリックを保存
         self.trick_plays = []
         self.lead_card = None
         self.trick_player_offset = 0
@@ -3548,6 +3553,8 @@ if __name__ == "__main__":
     parser.add_argument("--simulate-witch", action="store_true", help="Run witch balance simulation")
     parser.add_argument("--auto", action="store_true", help="Run automated game with 4 bots (for CI testing)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for --auto mode")
+    parser.add_argument("--rich-ui", action="store_true", help="Run Rich UI server (browser-based)")
+    parser.add_argument("--port", type=int, default=8080, help="Port for Rich UI server")
     args = parser.parse_args()
 
     try:
@@ -3564,6 +3571,11 @@ if __name__ == "__main__":
         elif args.auto:
             result = run_auto_game(seed=args.seed)
             sys.exit(0 if result["success"] else 1)
+        elif args.rich_ui:
+            from rich_ui_server import run_server
+            print(f"Starting Rich UI server on port {args.port}...")
+            print(f"Open http://127.0.0.1:{args.port} in your browser")
+            run_server(host="127.0.0.1", port=args.port)
         else:
             main()
     except KeyboardInterrupt:

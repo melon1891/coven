@@ -1,0 +1,330 @@
+/* ======================================
+   Coven Rich UI - Card Styles
+   ====================================== */
+
+:root {
+    /* Card Dimensions */
+    --card-width: 70px;
+    --card-height: 98px;
+    --card-border-radius: 8px;
+
+    /* Suit Colors */
+    --suit-spade: #1a1a2e;
+    --suit-heart: #e74c3c;
+    --suit-diamond: #3498db;
+    --suit-club: #27ae60;
+    --suit-trump: #f39c12;
+}
+
+/* ======================================
+   Base Card
+   ====================================== */
+.card {
+    width: var(--card-width);
+    height: var(--card-height);
+    border-radius: var(--card-border-radius);
+    background: linear-gradient(135deg, #fff 0%, #f0f0f0 100%);
+    border: 2px solid #ddd;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    user-select: none;
+}
+
+.card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+.card.selected {
+    transform: translateY(-12px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
+    border-color: var(--accent-primary);
+}
+
+.card.legal {
+    border-color: var(--success-color);
+    box-shadow: 0 0 10px rgba(39, 174, 96, 0.4);
+}
+
+.card.illegal {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.card.illegal:hover {
+    transform: none;
+}
+
+.card.face-down {
+    background: linear-gradient(135deg, #2c3e50 0%, #1a252f 100%);
+    border-color: #34495e;
+}
+
+.card.face-down::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 40px;
+    height: 40px;
+    background: radial-gradient(circle, #e94560 0%, transparent 70%);
+    opacity: 0.5;
+}
+
+/* ======================================
+   Card Content
+   ====================================== */
+.card-corner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1;
+}
+
+.card-corner.top-left {
+    align-self: flex-start;
+}
+
+.card-corner.bottom-right {
+    align-self: flex-end;
+    transform: rotate(180deg);
+}
+
+.card-rank {
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.card-suit-symbol {
+    font-size: 14px;
+}
+
+.card-center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 32px;
+}
+
+/* ======================================
+   Suit-Specific Styles
+   ====================================== */
+.card[data-suit="spade"] {
+    --suit-color: var(--suit-spade);
+}
+
+.card[data-suit="heart"] {
+    --suit-color: var(--suit-heart);
+}
+
+.card[data-suit="diamond"] {
+    --suit-color: var(--suit-diamond);
+}
+
+.card[data-suit="club"] {
+    --suit-color: var(--suit-club);
+}
+
+.card[data-suit="trump"] {
+    --suit-color: var(--suit-trump);
+    background: linear-gradient(135deg, #fff9e6 0%, #ffe066 100%);
+    border-color: var(--suit-trump);
+}
+
+.card .card-rank,
+.card .card-suit-symbol,
+.card .card-center {
+    color: var(--suit-color);
+}
+
+/* Suit Symbols */
+.card[data-suit="spade"] .card-center::before { content: '\2660'; }
+.card[data-suit="heart"] .card-center::before { content: '\2665'; }
+.card[data-suit="diamond"] .card-center::before { content: '\2666'; }
+.card[data-suit="club"] .card-center::before { content: '\2663'; }
+.card[data-suit="trump"] .card-center::before { content: '\2605'; }
+
+.card[data-suit="spade"] .card-suit-symbol::before { content: '\2660'; }
+.card[data-suit="heart"] .card-suit-symbol::before { content: '\2665'; }
+.card[data-suit="diamond"] .card-suit-symbol::before { content: '\2666'; }
+.card[data-suit="club"] .card-suit-symbol::before { content: '\2663'; }
+.card[data-suit="trump"] .card-suit-symbol::before { content: '\2605'; }
+
+/* ======================================
+   Card in Different Contexts
+   ====================================== */
+
+/* Hand Card */
+.player-hand .card {
+    margin: 0 -10px;
+}
+
+.player-hand .card:first-child {
+    margin-left: 0;
+}
+
+.player-hand .card:last-child {
+    margin-right: 0;
+}
+
+/* Trick Display Card */
+.trick-card-slot .card {
+    margin: 0;
+    /* Disable default transition - JS will control animation */
+    transition: none;
+}
+
+.trick-card-slot .card:hover {
+    transform: none;
+}
+
+/* Smaller Card for Opponent Display */
+.opponent-cards .card {
+    --card-width: 40px;
+    --card-height: 56px;
+    font-size: 0.7em;
+    padding: 3px;
+}
+
+.opponent-cards .card .card-rank {
+    font-size: 12px;
+}
+
+.opponent-cards .card .card-suit-symbol {
+    font-size: 10px;
+}
+
+.opponent-cards .card .card-center {
+    font-size: 18px;
+}
+
+/* Sealed Card Indicator */
+.card.sealed {
+    opacity: 0.6;
+    border-style: dashed;
+}
+
+.card.sealed::after {
+    content: 'SEALED';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-15deg);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--danger-color);
+    background: rgba(255, 255, 255, 0.9);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* ======================================
+   Card Selection States
+   ====================================== */
+.card.selectable {
+    cursor: pointer;
+}
+
+.card.selectable:hover {
+    border-color: var(--accent-primary);
+}
+
+.card.selected {
+    border-color: var(--success-color);
+    box-shadow: 0 0 15px rgba(39, 174, 96, 0.5);
+}
+
+/* Checkbox overlay for multi-select */
+.card .card-checkbox {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 24px;
+    height: 24px;
+    background: var(--bg-primary);
+    border: 2px solid var(--text-secondary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: transparent;
+    transition: all 0.2s ease;
+}
+
+.card.selected .card-checkbox {
+    background: var(--success-color);
+    border-color: var(--success-color);
+    color: white;
+}
+
+.card.selected .card-checkbox::before {
+    content: '\2713';
+}
+
+/* ======================================
+   Mini Card Display (for logs, history)
+   ====================================== */
+.card-mini {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.card-mini[data-suit="spade"] { color: var(--suit-spade); background: rgba(26, 26, 46, 0.3); }
+.card-mini[data-suit="heart"] { color: var(--suit-heart); background: rgba(231, 76, 60, 0.2); }
+.card-mini[data-suit="diamond"] { color: var(--suit-diamond); background: rgba(52, 152, 219, 0.2); }
+.card-mini[data-suit="club"] { color: var(--suit-club); background: rgba(39, 174, 96, 0.2); }
+.card-mini[data-suit="trump"] { color: var(--suit-trump); background: rgba(243, 156, 18, 0.2); }
+
+/* ======================================
+   Card Image Placeholders
+   (For future image replacement)
+   ====================================== */
+.card.with-image {
+    padding: 0;
+    overflow: hidden;
+}
+
+.card.with-image .card-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.card.with-image .card-corner,
+.card.with-image .card-center {
+    display: none;
+}
+
+/* ======================================
+   Card Pile (for deck display)
+   ====================================== */
+.card-pile {
+    position: relative;
+    width: var(--card-width);
+    height: var(--card-height);
+}
+
+.card-pile .card {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.card-pile .card:nth-child(1) { transform: translate(0, 0); }
+.card-pile .card:nth-child(2) { transform: translate(2px, 2px); }
+.card-pile .card:nth-child(3) { transform: translate(4px, 4px); }

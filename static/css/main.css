@@ -1,0 +1,863 @@
+/* ======================================
+   Coven Rich UI - Main Styles
+   ====================================== */
+
+:root {
+    /* Colors */
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #16213e;
+    --bg-card: #0f3460;
+    --text-primary: #eaeaea;
+    --text-secondary: #a0a0a0;
+    --accent-primary: #e94560;
+    --accent-secondary: #0f3460;
+    --gold-color: #ffd700;
+    --vp-color: #9b59b6;
+    --grace-color: #3498db;
+    --success-color: #27ae60;
+    --warning-color: #f39c12;
+    --danger-color: #e74c3c;
+
+    /* Spacing */
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+
+    /* Border Radius */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    /* Shadows */
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.4);
+
+    /* Transitions */
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.3s ease;
+}
+
+/* Reset & Base */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* Screen Management */
+.screen {
+    display: none;
+    width: 100%;
+    min-height: 100vh;
+}
+
+.screen.active {
+    display: flex;
+}
+
+/* ======================================
+   Start Screen
+   ====================================== */
+#start-screen {
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+}
+
+.start-container {
+    text-align: center;
+    padding: var(--spacing-xl);
+}
+
+.title {
+    font-size: 4rem;
+    font-weight: 700;
+    color: var(--accent-primary);
+    text-shadow: 0 0 20px rgba(233, 69, 96, 0.5);
+    margin-bottom: var(--spacing-sm);
+}
+
+.subtitle {
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-xl);
+}
+
+.start-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    align-items: center;
+}
+
+.start-options label {
+    color: var(--text-secondary);
+}
+
+.start-options input {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--accent-secondary);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 1rem;
+    width: 200px;
+    text-align: center;
+}
+
+/* Buttons */
+.btn {
+    padding: var(--spacing-sm) var(--spacing-lg);
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-primary {
+    background: var(--accent-primary);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #d63851;
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.btn-secondary {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--accent-secondary);
+}
+
+.btn-secondary:hover {
+    background: var(--accent-secondary);
+}
+
+.btn-icon {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--text-secondary);
+    color: var(--text-secondary);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ======================================
+   Game Screen
+   ====================================== */
+#game-screen {
+    flex-direction: column;
+}
+
+/* Header */
+.game-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--accent-secondary);
+}
+
+.header-left {
+    display: flex;
+    gap: var(--spacing-lg);
+    align-items: center;
+}
+
+.round-display {
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--gold-color);
+}
+
+.phase-display {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--bg-card);
+    border-radius: var(--radius-sm);
+}
+
+/* Main Layout */
+.game-main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.game-left {
+    flex: 2;
+    display: flex;
+    flex-direction: column;
+    padding: var(--spacing-md);
+    gap: var(--spacing-md);
+}
+
+.game-right {
+    flex: 1;
+    min-width: 300px;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--accent-secondary);
+    overflow-y: auto;
+}
+
+/* Opponents Area */
+.opponents-area {
+    display: flex;
+    justify-content: space-around;
+    gap: var(--spacing-md);
+}
+
+.opponent {
+    flex: 1;
+    max-width: 200px;
+    padding: var(--spacing-sm);
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+}
+
+.opponent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-xs);
+}
+
+.opponent .player-name {
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+.opponent .player-strategy {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.opponent-stats {
+    display: flex;
+    gap: var(--spacing-sm);
+    font-size: 0.85rem;
+}
+
+.opponent-stats .stat {
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+}
+
+.opponent-stats .gold {
+    background: rgba(255, 215, 0, 0.2);
+    color: var(--gold-color);
+}
+
+.opponent-stats .vp {
+    background: rgba(155, 89, 182, 0.2);
+    color: var(--vp-color);
+}
+
+.opponent-stats .grace {
+    background: rgba(52, 152, 219, 0.2);
+    color: var(--grace-color);
+}
+
+.opponent-cards {
+    margin-top: var(--spacing-xs);
+    min-height: 30px;
+}
+
+/* Play Area */
+.play-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    min-height: 200px;
+}
+
+.trick-display {
+    position: relative;
+    width: 300px;
+    height: 200px;
+}
+
+.trick-card-slot {
+    position: absolute;
+    width: 70px;
+    height: 98px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px dashed rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.trick-card-slot[data-position="top"] {
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.trick-card-slot[data-position="left"] {
+    top: 50%;
+    left: 20px;
+    transform: translateY(-50%);
+}
+
+.trick-card-slot[data-position="right"] {
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+}
+
+.trick-card-slot[data-position="bottom"] {
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.trick-card-slot .card {
+    position: absolute;
+}
+
+.trick-info {
+    margin-top: var(--spacing-sm);
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+/* Input Area */
+.input-area {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    min-height: 100px;
+}
+
+.input-prompt {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: var(--spacing-md);
+    color: var(--accent-primary);
+}
+
+.input-content {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    justify-content: center;
+}
+
+/* Declaration Input */
+.declaration-slider {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+.declaration-slider input[type="range"] {
+    width: 200px;
+}
+
+.declaration-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--gold-color);
+    min-width: 50px;
+    text-align: center;
+}
+
+/* Upgrade Selection */
+.upgrade-option {
+    padding: var(--spacing-md);
+    background: var(--bg-secondary);
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: center;
+    min-width: 120px;
+}
+
+.upgrade-option:hover {
+    border-color: var(--accent-primary);
+    transform: translateY(-2px);
+}
+
+.upgrade-option.selected {
+    border-color: var(--success-color);
+    background: rgba(39, 174, 96, 0.2);
+}
+
+.upgrade-option.taken {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.upgrade-option .upgrade-name {
+    font-weight: 600;
+    margin-bottom: var(--spacing-xs);
+}
+
+.upgrade-option .upgrade-effect {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+/* Worker Actions */
+.worker-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: var(--spacing-sm);
+    width: 100%;
+}
+
+.worker-action-btn {
+    padding: var(--spacing-md);
+    background: var(--bg-secondary);
+    border: 2px solid var(--accent-secondary);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.worker-action-btn:hover:not(:disabled) {
+    border-color: var(--accent-primary);
+    background: rgba(233, 69, 96, 0.1);
+}
+
+.worker-action-btn.selected {
+    border-color: var(--success-color);
+    background: rgba(39, 174, 96, 0.2);
+}
+
+.worker-action-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.worker-action-btn .action-count {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--gold-color);
+    margin-top: var(--spacing-xs);
+    min-height: 1em;
+}
+
+.worker-count {
+    margin-top: var(--spacing-sm);
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.action-buttons {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+    justify-content: center;
+}
+
+/* Player Hand Container */
+.player-hand-container {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+}
+
+.hand-label {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.player-hand {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+    min-height: 112px;
+}
+
+/* Player Info Panel */
+.player-info {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+}
+
+.player-info h3 {
+    color: var(--accent-primary);
+    margin-bottom: var(--spacing-md);
+    font-size: 1.1rem;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.stat-item {
+    display: flex;
+    justify-content: space-between;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+}
+
+.stat-label {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.stat-value {
+    font-weight: 600;
+}
+
+.levels-grid {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.level-item {
+    flex: 1;
+    text-align: center;
+    padding: var(--spacing-xs);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+}
+
+.level-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    display: block;
+}
+
+.level-value {
+    font-weight: 600;
+    color: var(--gold-color);
+}
+
+.declaration-info {
+    display: flex;
+    justify-content: space-around;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.witches-info {
+    margin-top: var(--spacing-sm);
+    font-size: 0.85rem;
+}
+
+/* Upgrades Display */
+.upgrades-display {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+}
+
+.upgrades-display h4 {
+    margin-bottom: var(--spacing-sm);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.upgrades-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+.upgrade-tag {
+    padding: 2px 8px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    position: relative;
+    cursor: help;
+}
+
+.upgrade-tag.taken {
+    opacity: 0.5;
+    text-decoration: line-through;
+}
+
+/* Tooltip for upgrade tags */
+.upgrade-tag .tooltip {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--accent-primary);
+    border-radius: var(--radius-md);
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    z-index: 1000;
+    box-shadow: var(--shadow-md);
+    transition: opacity var(--transition-fast), visibility var(--transition-fast);
+    pointer-events: none;
+}
+
+.upgrade-tag .tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: var(--accent-primary);
+}
+
+/* Desktop hover */
+.upgrade-tag:hover .tooltip {
+    visibility: visible;
+    opacity: 1;
+}
+
+/* Mobile: show on tap (via JS class) */
+.upgrade-tag.tooltip-active .tooltip {
+    visibility: visible;
+    opacity: 1;
+}
+
+/* Adjust tooltip position if near edge */
+.upgrade-tag .tooltip.tooltip-left {
+    left: 0;
+    transform: translateX(0);
+}
+
+.upgrade-tag .tooltip.tooltip-left::after {
+    left: 16px;
+    transform: translateX(0);
+}
+
+.upgrade-tag .tooltip.tooltip-right {
+    left: auto;
+    right: 0;
+    transform: translateX(0);
+}
+
+.upgrade-tag .tooltip.tooltip-right::after {
+    left: auto;
+    right: 16px;
+    transform: translateX(0);
+}
+
+/* Game Log */
+.game-log-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    min-height: 150px;
+    overflow: hidden;
+}
+
+.game-log-container h4 {
+    margin-bottom: var(--spacing-sm);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.game-log {
+    flex: 1;
+    overflow-y: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.log-entry {
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.log-entry.highlight {
+    color: var(--gold-color);
+}
+
+/* Trick History */
+.trick-history-container {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    max-height: 150px;
+    overflow: hidden;
+}
+
+.trick-history-container h4 {
+    margin-bottom: var(--spacing-sm);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.trick-history {
+    overflow-y: auto;
+    max-height: 100px;
+    font-size: 0.8rem;
+}
+
+.trick-entry {
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.trick-winner {
+    color: var(--success-color);
+    font-weight: 600;
+}
+
+/* ======================================
+   Result Screen
+   ====================================== */
+#result-screen {
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+}
+
+.result-container {
+    text-align: center;
+    padding: var(--spacing-xl);
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    max-width: 500px;
+    width: 90%;
+}
+
+.result-container h2 {
+    font-size: 2rem;
+    color: var(--accent-primary);
+    margin-bottom: var(--spacing-lg);
+}
+
+.result-rankings {
+    margin-bottom: var(--spacing-lg);
+}
+
+.ranking-entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+}
+
+.ranking-entry.rank-1 {
+    background: linear-gradient(135deg, rgba(255, 215, 0, 0.3), rgba(255, 215, 0, 0.1));
+    border: 2px solid var(--gold-color);
+}
+
+.ranking-entry.rank-2 {
+    background: linear-gradient(135deg, rgba(192, 192, 192, 0.3), rgba(192, 192, 192, 0.1));
+    border: 2px solid #c0c0c0;
+}
+
+.ranking-entry.rank-3 {
+    background: linear-gradient(135deg, rgba(205, 127, 50, 0.3), rgba(205, 127, 50, 0.1));
+    border: 2px solid #cd7f32;
+}
+
+.ranking-position {
+    font-size: 1.5rem;
+    font-weight: 700;
+    min-width: 40px;
+}
+
+.ranking-name {
+    flex: 1;
+    text-align: left;
+    padding-left: var(--spacing-md);
+}
+
+.ranking-vp {
+    font-weight: 600;
+    color: var(--vp-color);
+}
+
+/* ======================================
+   Utility Classes
+   ====================================== */
+.hidden {
+    display: none !important;
+}
+
+.text-gold { color: var(--gold-color); }
+.text-vp { color: var(--vp-color); }
+.text-grace { color: var(--grace-color); }
+.text-success { color: var(--success-color); }
+.text-warning { color: var(--warning-color); }
+.text-danger { color: var(--danger-color); }
+
+/* ======================================
+   Responsive Design
+   ====================================== */
+@media (max-width: 768px) {
+    .game-main {
+        flex-direction: column;
+    }
+
+    .game-right {
+        max-width: none;
+        border-left: none;
+        border-top: 1px solid var(--accent-secondary);
+    }
+
+    .opponents-area {
+        flex-wrap: wrap;
+    }
+
+    .opponent {
+        min-width: 150px;
+    }
+
+    .trick-display {
+        width: 250px;
+        height: 170px;
+    }
+}

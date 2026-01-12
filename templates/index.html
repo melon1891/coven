@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coven - Rich UI</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="stylesheet" href="/static/css/cards.css">
+    <link rel="stylesheet" href="/static/css/animations.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Start Screen -->
+        <div id="start-screen" class="screen active">
+            <div class="start-container">
+                <h1 class="title">Coven</h1>
+                <p class="subtitle">Trick-Taking & Worker Placement</p>
+                <div class="start-options">
+                    <label for="seed-input">シード値（任意）:</label>
+                    <input type="number" id="seed-input" placeholder="ランダム">
+                    <button id="start-btn" class="btn btn-primary">ゲーム開始</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Screen -->
+        <div id="game-screen" class="screen">
+            <!-- Header -->
+            <header class="game-header">
+                <div class="header-left">
+                    <span class="round-display">Round <span id="round-no">1</span>/6</span>
+                    <span class="phase-display" id="phase-display">Starting...</span>
+                </div>
+                <div class="header-right">
+                    <button id="settings-btn" class="btn btn-icon" title="設定">
+                        <span class="icon">設定</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Main Game Area -->
+            <main class="game-main">
+                <!-- Left Panel: Opponents + Play Area -->
+                <div class="game-left">
+                    <!-- Opponents Area -->
+                    <div class="opponents-area">
+                        <div class="opponent" id="opponent-p2">
+                            <div class="opponent-header">
+                                <span class="player-name">P2</span>
+                                <span class="player-strategy"></span>
+                            </div>
+                            <div class="opponent-stats">
+                                <span class="stat gold">0</span>
+                                <span class="stat vp">0 VP</span>
+                                <span class="stat grace">0</span>
+                            </div>
+                            <div class="opponent-cards"></div>
+                        </div>
+                        <div class="opponent" id="opponent-p3">
+                            <div class="opponent-header">
+                                <span class="player-name">P3</span>
+                                <span class="player-strategy"></span>
+                            </div>
+                            <div class="opponent-stats">
+                                <span class="stat gold">0</span>
+                                <span class="stat vp">0 VP</span>
+                                <span class="stat grace">0</span>
+                            </div>
+                            <div class="opponent-cards"></div>
+                        </div>
+                        <div class="opponent" id="opponent-p4">
+                            <div class="opponent-header">
+                                <span class="player-name">P4</span>
+                                <span class="player-strategy"></span>
+                            </div>
+                            <div class="opponent-stats">
+                                <span class="stat gold">0</span>
+                                <span class="stat vp">0 VP</span>
+                                <span class="stat grace">0</span>
+                            </div>
+                            <div class="opponent-cards"></div>
+                        </div>
+                    </div>
+
+                    <!-- Play Area (Trick Display) -->
+                    <div class="play-area">
+                        <div class="trick-display" id="trick-display">
+                            <div class="trick-card-slot" data-position="top"></div>
+                            <div class="trick-card-slot" data-position="left"></div>
+                            <div class="trick-card-slot" data-position="right"></div>
+                            <div class="trick-card-slot" data-position="bottom"></div>
+                        </div>
+                        <div class="trick-info" id="trick-info">
+                            <span class="lead-suit"></span>
+                        </div>
+                    </div>
+
+                    <!-- Input Area -->
+                    <div class="input-area" id="input-area">
+                        <div class="input-prompt" id="input-prompt"></div>
+                        <div class="input-content" id="input-content"></div>
+                    </div>
+
+                    <!-- Player Hand -->
+                    <div class="player-hand-container">
+                        <div class="hand-label">手札</div>
+                        <div class="player-hand" id="player-hand"></div>
+                    </div>
+                </div>
+
+                <!-- Right Panel: Info + Log -->
+                <div class="game-right">
+                    <!-- Player Info (P1) -->
+                    <div class="player-info" id="player-info">
+                        <h3>P1 (あなた)</h3>
+                        <div class="stats-grid">
+                            <div class="stat-item">
+                                <span class="stat-label">金貨</span>
+                                <span class="stat-value" id="p1-gold">5</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">VP</span>
+                                <span class="stat-value" id="p1-vp">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">恩寵</span>
+                                <span class="stat-value" id="p1-grace">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">ワーカー</span>
+                                <span class="stat-value" id="p1-workers">2</span>
+                            </div>
+                        </div>
+                        <div class="levels-grid">
+                            <div class="level-item">
+                                <span class="level-label">交易</span>
+                                <span class="level-value" id="p1-trade-level">Lv0</span>
+                            </div>
+                            <div class="level-item">
+                                <span class="level-label">討伐</span>
+                                <span class="level-value" id="p1-hunt-level">Lv0</span>
+                            </div>
+                            <div class="level-item">
+                                <span class="level-label">祈り</span>
+                                <span class="level-value" id="p1-pray-level">Lv0</span>
+                            </div>
+                        </div>
+                        <div class="declaration-info">
+                            <span>宣言: <span id="p1-declared">-</span></span>
+                            <span>獲得: <span id="p1-won">0</span></span>
+                        </div>
+                        <div class="witches-info" id="p1-witches"></div>
+                    </div>
+
+                    <!-- Upgrades Display -->
+                    <div class="upgrades-display" id="upgrades-display">
+                        <h4>アップグレード</h4>
+                        <div class="upgrades-list" id="upgrades-list"></div>
+                    </div>
+
+                    <!-- Game Log -->
+                    <div class="game-log-container">
+                        <h4>ゲームログ</h4>
+                        <div class="game-log" id="game-log"></div>
+                    </div>
+
+                    <!-- Trick History -->
+                    <div class="trick-history-container">
+                        <h4>トリック履歴</h4>
+                        <div class="trick-history" id="trick-history"></div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Result Screen -->
+        <div id="result-screen" class="screen">
+            <div class="result-container">
+                <h2>ゲーム終了</h2>
+                <div class="result-rankings" id="result-rankings"></div>
+                <button id="new-game-btn" class="btn btn-primary">新しいゲーム</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/websocket.js"></script>
+    <script src="/static/js/ui.js"></script>
+    <script src="/static/js/game.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
