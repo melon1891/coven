@@ -580,7 +580,7 @@ def upgrade_name(u: str) -> str:
     mapping = {
         "UP_TRADE": "交易拠点 改善（レベル+1）",
         "UP_HUNT": "魔物討伐 改善（レベル+1）",
-        "RECRUIT_INSTANT": "見習い魔女派遣（2金で+2人）",
+        "RECRUIT_INSTANT": "見習い魔女派遣（2金で+1人）",
         "RECRUIT_WAGE_DISCOUNT": "育成負担軽減の護符（雇用ターン給料軽減）",
         "UP_PRAY": "祈りの祭壇 強化（レベル+1）",
         "UP_DONATE": "寄付の祭壇（寄付アクション解放）",
@@ -601,7 +601,7 @@ def upgrade_description(u: str) -> str:
     descriptions = {
         "UP_TRADE": "交易アクションの収益が+2金貨増加します。最大レベル2まで強化可能（基礎2→Lv1:4→Lv2:6）。",
         "UP_HUNT": "討伐アクションの獲得VPが+1増加します。最大レベル2まで強化可能。",
-        "RECRUIT_INSTANT": "2金支払い、即座に見習い2人を獲得。以後給料支払い不要。",
+        "RECRUIT_INSTANT": "2金支払い、即座に見習い1人を獲得。以後給料支払い不要。",
         "RECRUIT_WAGE_DISCOUNT": "雇用したターンの給料支払いが軽減されます。",
         "UP_PRAY": "【祈り強化】祈りアクションの恩寵獲得+1。最大レベル2まで強化可能（基礎1→Lv1:2→Lv2:3）。",
         "UP_DONATE": "【寄付アクション解放】2金 → 1恩寵に変換可能。金貨を恩寵に変えたいときに。",
@@ -686,10 +686,10 @@ def apply_upgrade(player: Player, u: str) -> None:
     elif u == "UP_HUNT":
         player.hunt_level = min(2, player.hunt_level + 1)
     elif u == "RECRUIT_INSTANT":
-        # 2金支払い、即座にワーカー+2（以後給料なし）
+        # 2金支払い、即座にワーカー+1（以後給料なし）
         player.gold -= UPGRADE_WORKER_COST
-        player.basic_workers_total += 2
-        player.upgraded_workers += 2
+        player.basic_workers_total += 1
+        player.upgraded_workers += 1
     elif u == "RECRUIT_WAGE_DISCOUNT":
         player.recruit_upgrade = u
     elif u == "UP_PRAY":
