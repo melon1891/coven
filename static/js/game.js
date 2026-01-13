@@ -131,13 +131,7 @@ class GameManager {
         const input = this.pendingInput;
         if (!input) return;
 
-        // Update hand if available
-        if (input.context && input.context.hand) {
-            const legal = input.context.legal || null;
-            uiManager.updatePlayerHand(input.context.hand, legal);
-        }
-
-        // Show input UI
+        // Show input UI (each input type handler will update the hand appropriately)
         uiManager.showInput(input, (value) => {
             this.sendInput(value);
         });
