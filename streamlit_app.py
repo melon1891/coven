@@ -641,7 +641,6 @@ def init_game():
             take_gold_instead=cfg["take_gold_instead"],
             rescue_gold_for_4th=cfg["rescue_gold_for_4th"],
             enabled_upgrades=enabled,
-            rounds=cfg.get("rounds", ROUNDS),
         )
     else:
         config = GameConfig()
@@ -798,10 +797,17 @@ if pending is not None:
     player = pending.player
     context = pending.context
 
+    # デバッグ情報: 入力待ちの状態を表示
+    with st.expander("🔧 デバッグ情報", expanded=False):
+        st.write(f"入力タイプ: {req_type}")
+        st.write(f"プレイヤー: {player.name}")
+        if "hand" in context:
+            st.write(f"手札数: {len(context['hand'])}")
+
     if req_type == "declaration":
         st.subheader(f"🎴 宣言フェーズ")
         hand = context["hand"]
-        st.write("手札:")
+        st.write(f"手札: ({len(hand)}枚)")
         # 3列×2行のグリッドで表示（モバイル向け）
         for row in range(2):
             cols = st.columns(3)
@@ -856,6 +862,13 @@ if pending is not None:
     elif req_type == "choose_card":
         st.subheader(f"🃏 カードを選択")
 
+        # デバッグ情報（問題調査用）
+        hand = context["hand"]
+        legal = context["legal"]
+        if len(hand) == 0:
+            st.error("⚠️ デバッグ: 手札が空です！")
+            st.write(f"playable_hands: {list(game.playable_hands.keys())}")
+
         # リード情報を目立つように表示
         lead = context["lead_card"]
         if lead:
@@ -882,6 +895,8 @@ if pending is not None:
         legal = context["legal"]
 
         st.write("カードを選んでプレイ:")
+        # デバッグ: 手札情報
+        st.caption(f"[デバッグ] 手札: {len(hand)}枚, 合法: {len(legal)}枚")
         # 2列×2行のグリッド（残り手札は最大4枚）
         num_cards = len(hand)
         cols_per_row = 2
