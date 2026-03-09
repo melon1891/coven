@@ -41,7 +41,32 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git rebase:*)",
-      "Bash(GIT_EDITOR=true git rebase:*)"
+      "Bash(GIT_EDITOR=true git rebase:*)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_take_screenshot",
+      "mcp__playwright__browser_resize",
+      "Bash(ls -la \"C:\\\\Users\\\\melon\\\\coven\\\\coven\\\\print\\\\images\\\\witches\"\" && echo \"---\" && ls -la \"C:Usersmeloncovencovenprintimagesupgrades\"\")",
+      "Bash(ls:*)",
+      "Bash(python:*)",
+      "mcp__playwright__browser_run_code",
+      "Bash(set PYTHONIOENCODING=utf-8)",
+      "Bash($env:PYTHONIOENCODING='utf-8')",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python:*)",
+      "Bash(claude mcp:*)",
+      "Bash(ping:*)",
+      "Bash(curl:*)",
+      "Bash(findstr:*)",
+      "mcp__chrome-devtools__fill",
+      "mcp__chrome-devtools__click",
+      "mcp__chrome-devtools__evaluate_script",
+      "mcp__chrome-devtools__take_screenshot",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //PID 38020 //F)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run uvicorn rich_ui_server:app --host 0.0.0.0 --port 8765)",
+      "mcp__chrome-devtools__wait_for",
+      "mcp__chrome-devtools__list_console_messages",
+      "Bash(pkill:*)",
+      "Bash(uv sync:*)"
     ]
   }
 }
