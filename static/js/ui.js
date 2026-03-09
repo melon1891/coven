@@ -595,6 +595,9 @@ class UIManager {
             case 'fourth_place_bonus':
                 this.showFourthPlaceBonusInput(context, onSubmit);
                 break;
+            case 'ritual_choice':
+                this.showRitualChoiceInput(context, onSubmit);
+                break;
             case 'grace_priority':
                 this.showGracePriorityInput(context, onSubmit);
                 break;
@@ -855,6 +858,23 @@ class UIManager {
 
         document.getElementById('bonus-gold').addEventListener('click', () => onSubmit('gold'));
         document.getElementById('bonus-grace').addEventListener('click', () => onSubmit('grace'));
+    }
+
+    /**
+     * Ritual choice input UI
+     */
+    showRitualChoiceInput(context, onSubmit) {
+        const graceAmount = context.grace_amount || 2;
+        const goldAmount = context.gold_amount || 2;
+        this.elements.inputPrompt.textContent = '儀式の祭壇: 報酬を選んでください（ワーカー1人を永久消費）';
+
+        this.elements.inputContent.innerHTML = `
+            <button class="btn btn-secondary" id="ritual-grace">+${graceAmount}恩寵</button>
+            <button class="btn btn-primary" id="ritual-gold">+${goldAmount}金</button>
+        `;
+
+        document.getElementById('ritual-grace').addEventListener('click', () => onSubmit('grace'));
+        document.getElementById('ritual-gold').addEventListener('click', () => onSubmit('gold'));
     }
 
     /**

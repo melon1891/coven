@@ -1053,6 +1053,23 @@ if pending is not None:
                 run_until_input()
                 st.rerun()
 
+    elif req_type == "ritual_choice":
+        grace_amount = context.get("grace_amount", PERSONAL_RITUAL_GRACE)
+        gold_amount = context.get("gold_amount", PERSONAL_RITUAL_GOLD)
+        st.subheader("儀式の祭壇")
+        st.warning("報酬を選んでください（ワーカー1人を永久消費）")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(f"+{grace_amount} 恩寵", type="secondary", use_container_width=True):
+                game.provide_input("grace")
+                run_until_input()
+                st.rerun()
+        with col2:
+            if st.button(f"+{gold_amount} 金", type="primary", use_container_width=True):
+                game.provide_input("gold")
+                run_until_input()
+                st.rerun()
+
     elif req_type == "grace_priority":
         cost = context.get("cost", GRACE_PRIORITY_COST)
         grace = context.get("grace", 0)

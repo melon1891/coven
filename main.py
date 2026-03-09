@@ -2438,6 +2438,7 @@ class GameEngine:
         self.log_messages: List[str] = []
 
         self._pending_input: Optional[InputRequest] = None
+        self._pending_ritual_action: Optional[str] = None
 
     def _log(self, msg: str):
         self.log_messages.append(msg)
@@ -2581,11 +2582,71 @@ class GameEngine:
             action = response
             ps = self.wp_placement_state
             if ps is not None:
+                # RITUALスポットかチェック（人間プレイヤーの場合は選択UIを表示）
+                is_ritual = (action.startswith("SPOT:") and action.split(":", 3)[3] == "UP_RITUAL")
+                if is_ritual and not player.is_bot:
+                    # RITUALの報酬選択を pending input にする
+                    owner_name = action.split(":", 3)[1]
+                    owner = next((p for p in ps.all_players if p.name == owner_name), player)
+                    level = 2 if "UP_RITUAL" in owner.leveled_spots else 1
+                    self._pending_ritual_action = action
+                    self._pending_input = InputRequest(
+                        type="ritual_choice",
+                        player=player,
+                        context={
+                            "grace_amount": PERSONAL_RITUAL_GRACE + (level - 1),
+                            "gold_amount": PERSONAL_RITUAL_GOLD + (level - 1),
+                        },
+                    )
+                    return
                 result = resolve_single_action(player, action, ps)
                 ps.workers_remaining[player.name] -= 1
                 effects_str = ", ".join(result["effects"])
                 self._log(f"{player.name}: {result['display']} → {effects_str}")
                 self.wp_order_idx += 1
+            self._pending_input = None
+
+        elif req_type == "ritual_choice":
+            # response: "grace" or "gold"
+            action = self._pending_ritual_action
+            ps = self.wp_placement_state
+            if ps is not None:
+                # _choose_ritual_rewardをバイパスして直接解決
+                parts = action.split(":", 3)
+                owner_name = parts[1]
+                idx = int(parts[2])
+                owner = next((p for p in ps.all_players if p.name == owner_name), player)
+                is_owner = (player.name == owner_name)
+                level = 2 if "UP_RITUAL" in owner.leveled_spots else 1
+                grace_amount = PERSONAL_RITUAL_GRACE + (level - 1)
+                gold_amount = PERSONAL_RITUAL_GOLD + (level - 1)
+
+                result: Dict[str, Any] = {"action": action, "display": _spot_display_name(action, player, ps.all_players), "effects": []}
+                used = ps.personal_spots_used.setdefault(owner_name, set())
+                used.add(idx)
+                if "UP_RITUAL" in owner.leveled_spots:
+                    for i2, s2 in enumerate(owner.personal_spots):
+                        if s2 == "UP_RITUAL":
+                            used.add(i2)
+                if not is_owner:
+                    owner.gold += 1
+                    result["effects"].append(f"({owner_name}に+1金収入)")
+
+                if response == "grace":
+                    player.grace_points += grace_amount
+                    result["effects"].append(f"+{grace_amount}恩寵")
+                else:
+                    player.gold += gold_amount
+                    result["effects"].append(f"+{gold_amount}金")
+                player.basic_workers_total -= 1
+                player.ritual_consumed_this_round += 1
+                result["effects"].append("ワーカー-1(永久消費)")
+
+                ps.workers_remaining[player.name] -= 1
+                effects_str = ", ".join(result["effects"])
+                self._log(f"{player.name}: {result['display']} → {effects_str}")
+                self.wp_order_idx += 1
+            self._pending_ritual_action = None
             self._pending_input = None
 
         elif req_type == "grace_priority":

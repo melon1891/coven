@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from starlette.requests import Request
 
 # Import game engine from main.py
-from main import GameEngine, GameConfig, Card, RECRUIT_COST
+from main import GameEngine, GameConfig, Card, RECRUIT_COST, GRACE_PRIORITY_COST, PERSONAL_RITUAL_GRACE, PERSONAL_RITUAL_GOLD
 
 app = FastAPI(title="Coven - Rich UI")
 
@@ -241,6 +241,10 @@ class GameSession:
             result["context"]["gold_option"] = ctx.get("gold_option", 2)
             result["context"]["grace_option"] = ctx.get("grace_option", 2)
 
+        elif pending.type == "ritual_choice":
+            result["context"]["grace_amount"] = ctx.get("grace_amount", PERSONAL_RITUAL_GRACE)
+            result["context"]["gold_amount"] = ctx.get("gold_amount", PERSONAL_RITUAL_GOLD)
+
         elif pending.type == "grace_priority":
             result["context"]["cost"] = ctx.get("cost", GRACE_PRIORITY_COST)
             result["context"]["grace"] = ctx.get("grace", 0)
@@ -332,6 +336,13 @@ class GameSession:
             # Normalize to uppercase
             if isinstance(response, str):
                 response = response.upper()
+
+        elif pending.type == "ritual_choice":
+            # Normalize to "grace" or "gold"
+            if isinstance(response, str):
+                response = response.lower()
+            if response not in ("grace", "gold"):
+                response = "grace"
 
         elif pending.type == "grace_priority":
             # Convert to boolean

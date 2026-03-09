@@ -244,6 +244,9 @@ def auto_respond(engine: GameEngine, pending):
     elif pending.type == "grace_priority":
         engine.provide_input(False)  # Skip grace priority
 
+    elif pending.type == "ritual_choice":
+        engine.provide_input("grace")  # Default to grace
+
     elif pending.type == "worker_actions":
         engine.provide_input("TRADE")
 
