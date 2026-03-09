@@ -2443,6 +2443,45 @@ class GameEngine:
     def _log(self, msg: str):
         self.log_messages.append(msg)
 
+    def _build_worker_placement_info(self) -> Optional[Dict[str, Any]]:
+        """ワーカー配置フェーズの詳細情報を返す"""
+        if self.phase != "worker_placement" or self.wp_placement_state is None:
+            return None
+        ps = self.wp_placement_state
+        # 配置順リスト
+        order = [p.name for p in self.wp_order] if self.wp_order else []
+        # 現在配置中のプレイヤー
+        current_idx = self.wp_order_idx
+        current_player = order[current_idx] if current_idx < len(order) else None
+        # 各プレイヤーの残りワーカー数
+        workers_remaining = dict(ps.workers_remaining)
+        # 共通スポットの使用状況
+        common_spots = {
+            "TRADE": ps.shared_trade_taken,
+            "HUNT": ps.shared_hunt_taken,
+            "PRAY": ps.shared_pray_taken,
+        }
+        # 共有スポットの使用状況
+        personal_used = {}
+        for owner_name, used_set in ps.personal_spots_used.items():
+            personal_used[owner_name] = list(used_set)
+        # 直近のアクション履歴（ワーカー配置フェーズ中のログ）
+        placement_log = []
+        for msg in reversed(self.log_messages):
+            if msg.startswith("配置順:") or "→" in msg:
+                placement_log.insert(0, msg)
+            elif msg.startswith("---") or msg.startswith("==="):
+                break
+        return {
+            "order": order,
+            "current_idx": current_idx,
+            "current_player": current_player,
+            "workers_remaining": workers_remaining,
+            "common_spots": common_spots,
+            "personal_spots_used": personal_used,
+            "placement_log": placement_log[-10:],  # 直近10件
+        }
+
     def _build_shared_board(self) -> List[Dict[str, Any]]:
         """共有ボードの状態を返す"""
         board = []
@@ -2481,6 +2520,7 @@ class GameEngine:
             "log": self.log_messages[-20:],  # Last 20 messages
             "game_over": self.phase == "game_end",
             "shared_board": self._build_shared_board(),
+            "worker_placement_info": self._build_worker_placement_info(),
         }
 
     def get_pending_input(self) -> Optional[InputRequest]:

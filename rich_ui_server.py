@@ -190,6 +190,12 @@ class GameSession:
                 self._card_to_dict(c) if isinstance(c, Card) else str(c) for c in cards
             ]
 
+        # Worker placement info (BGA-style board)
+        result["worker_placement_info"] = state.get("worker_placement_info")
+
+        # Shared board
+        result["shared_board"] = state.get("shared_board", [])
+
         return result
 
     def _serialize_pending_input(self, pending) -> Dict[str, Any]:

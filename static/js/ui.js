@@ -182,6 +182,9 @@ class UIManager {
         const shouldAnimate = animateTrickPlays && plays.length === 4;
         console.log('updateGameState: plays.length =', plays.length, 'animateTrickPlays =', animateTrickPlays, 'shouldAnimate =', shouldAnimate);
         this.updateTrickPlays(plays, shouldAnimate);
+
+        // Update worker placement board
+        this.updateWorkerPlacementBoard(state.worker_placement_info, state.shared_board);
     }
 
     /**
@@ -903,7 +906,7 @@ class UIManager {
         const actions = context.available_actions || [];
         const recruitCost = context.recruit_cost || 2;
 
-        this.elements.inputPrompt.textContent = `ワーカーを配置（残り${workers}人）`;
+        this.elements.inputPrompt.textContent = `ワーカーを配置してください（残り${workers}人）`;
 
         this.elements.inputContent.innerHTML = `
             <div class="worker-actions-grid" id="actions-grid"></div>
@@ -911,14 +914,25 @@ class UIManager {
 
         const grid = document.getElementById('actions-grid');
 
+        // Categorize actions
+        const commonActions = [];
+        const personalActions = [];
+        const otherActions = [];
+
+        actions.forEach(action => {
+            if (['TRADE', 'HUNT', 'PRAY'].includes(action)) commonActions.push(action);
+            else if (action === 'RECRUIT') otherActions.push(action);
+            else if (action.startsWith('SPOT:')) personalActions.push(action);
+            else otherActions.push(action);
+        });
+
         // Format action display name from action string
         const formatAction = (action) => {
-            if (action === 'TRADE') return { name: '共通交易', effect: '+2金' };
-            if (action === 'HUNT') return { name: '共通討伐', effect: '+1VP' };
-            if (action === 'PRAY') return { name: '共通祈り', effect: '+1恩寵' };
-            if (action === 'RECRUIT') return { name: '雇用', effect: `-${recruitCost}金→+1人` };
+            if (action === 'TRADE') return { name: '共通交易', effect: '+2金', category: 'common' };
+            if (action === 'HUNT') return { name: '共通討伐', effect: '+1VP', category: 'common' };
+            if (action === 'PRAY') return { name: '共通祈り', effect: '+1恩寵', category: 'common' };
+            if (action === 'RECRUIT') return { name: '雇用', effect: `-${recruitCost}金→+1人`, category: 'recruit' };
             if (action.startsWith('SPOT:')) {
-                // Format: SPOT:{owner}:{idx}:{type}
                 const parts = action.split(':');
                 const ownerName = parts[1];
                 const spotName = parts[3];
@@ -926,36 +940,116 @@ class UIManager {
                 const isOwn = (ownerName === playerName);
                 const ownerTag = isOwn ? '' : ` [${ownerName}]`;
                 const spotInfo = {
-                    'UP_TRADE': { name: '交易', effect: '+金' },
-                    'UP_HUNT': { name: '討伐', effect: '+VP' },
-                    'UP_PRAY': { name: '祈り', effect: '+恩寵' },
-                    'UP_RITUAL': { name: '儀式', effect: '恩寵or金(ワーカー消費)' },
-                    'WITCH_NEGOTIATE': { name: '交渉の魔女', effect: '1恩寵→2金' },
+                    'UP_TRADE': { name: '交易', effect: '+金', icon: '💰' },
+                    'UP_HUNT': { name: '討伐', effect: '+VP', icon: '⚔️' },
+                    'UP_PRAY': { name: '祈り', effect: '+恩寵', icon: '🙏' },
+                    'UP_RITUAL': { name: '儀式', effect: '恩寵or金', icon: '🔮' },
+                    'WITCH_NEGOTIATE': { name: '交渉の魔女', effect: '1恩寵→2金', icon: '🤝' },
                 };
-                const info = spotInfo[spotName] || { name: spotName, effect: '' };
-                return { name: `${info.name}${ownerTag}`, effect: isOwn ? info.effect : `${info.effect} (${ownerName}+1金)` };
+                const info = spotInfo[spotName] || { name: spotName, effect: '', icon: '' };
+                const ownerNote = isOwn ? '' : ` → ${ownerName}+1金`;
+                return { name: `${info.name}${ownerTag}`, effect: `${info.effect}${ownerNote}`, category: 'personal' };
             }
-            return { name: action, effect: '' };
+            return { name: action, effect: '', category: 'other' };
         };
 
-        actions.forEach(action => {
+        const createBtn = (action) => {
             const info = formatAction(action);
-
             const btn = document.createElement('button');
-            btn.className = 'worker-action-btn';
+            btn.className = `worker-action-btn cat-${info.category}`;
             btn.dataset.action = action;
             btn.innerHTML = `
                 <div class="action-name">${info.name}</div>
                 <div class="action-effect">${info.effect}</div>
             `;
+            btn.addEventListener('click', () => onSubmit(action));
+            return btn;
+        };
 
-            btn.addEventListener('click', () => {
-                // Single action selection — submit immediately
-                onSubmit(action);
-            });
+        // Add section labels and buttons
+        if (commonActions.length > 0) {
+            const label = document.createElement('div');
+            label.className = 'action-section-label';
+            label.textContent = '共通スポット（早い者勝ち）';
+            grid.appendChild(label);
+            commonActions.forEach(a => grid.appendChild(createBtn(a)));
+        }
+        if (personalActions.length > 0) {
+            const label = document.createElement('div');
+            label.className = 'action-section-label';
+            label.textContent = '共有スポット';
+            grid.appendChild(label);
+            personalActions.forEach(a => grid.appendChild(createBtn(a)));
+        }
+        if (otherActions.length > 0) {
+            otherActions.forEach(a => grid.appendChild(createBtn(a)));
+        }
+    }
 
-            grid.appendChild(btn);
-        });
+    /**
+     * Update worker placement board (BGA-style status display)
+     */
+    updateWorkerPlacementBoard(wpInfo, sharedBoard) {
+        let boardEl = document.getElementById('wp-board');
+        if (!wpInfo) {
+            if (boardEl) boardEl.style.display = 'none';
+            return;
+        }
+
+        if (!boardEl) {
+            boardEl = document.createElement('div');
+            boardEl.id = 'wp-board';
+            boardEl.className = 'wp-board';
+            // Insert before game log
+            const logHeader = document.querySelector('#game-log')?.parentElement;
+            if (logHeader) logHeader.before(boardEl);
+            else document.querySelector('.game-area')?.appendChild(boardEl);
+        }
+        boardEl.style.display = 'block';
+
+        const { order, current_idx, current_player, workers_remaining, common_spots, personal_spots_used, placement_log } = wpInfo;
+
+        // Build placement order bar
+        const orderHtml = order.map((name, i) => {
+            const remaining = workers_remaining[name] ?? 0;
+            let cls = 'wp-player';
+            if (i < current_idx) cls += ' wp-done';
+            else if (i === current_idx) cls += ' wp-active';
+            const dots = remaining > 0 ? '●'.repeat(remaining) : '○';
+            return `<span class="${cls}">${name} <span class="wp-dots">${dots}</span></span>`;
+        }).join('<span class="wp-arrow">→</span>');
+
+        // Build common spots status
+        const commonHtml = ['TRADE', 'HUNT', 'PRAY'].map(spot => {
+            const taken = common_spots[spot];
+            const names = { TRADE: '交易', HUNT: '討伐', PRAY: '祈り' };
+            const cls = taken ? 'wp-spot taken' : 'wp-spot available';
+            const status = taken ? '使用済' : '空き';
+            return `<span class="${cls}">${names[spot]}: ${status}</span>`;
+        }).join('');
+
+        // Build activity feed from placement log
+        const feedHtml = (placement_log || []).map(msg => {
+            // Highlight player names
+            const highlighted = msg.replace(/(P\d)/g, '<strong>$1</strong>');
+            return `<div class="wp-feed-item">${highlighted}</div>`;
+        }).join('');
+
+        boardEl.innerHTML = `
+            <div class="wp-section">
+                <div class="wp-section-title">配置順</div>
+                <div class="wp-order">${orderHtml}</div>
+            </div>
+            <div class="wp-section">
+                <div class="wp-section-title">共通スポット</div>
+                <div class="wp-common-spots">${commonHtml}</div>
+            </div>
+            ${feedHtml ? `
+            <div class="wp-section">
+                <div class="wp-section-title">アクション履歴</div>
+                <div class="wp-feed">${feedHtml}</div>
+            </div>` : ''}
+        `;
     }
 
     /**
