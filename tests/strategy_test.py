@@ -2,6 +2,10 @@
 Strategic CPU Battle Test
 4 strategies: Conservative, VP Aggressive, Balanced, Debt Avoidance
 """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import random
 from typing import List, Dict, Any
 from main import (

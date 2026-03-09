@@ -16,7 +16,8 @@ import traceback
 from typing import Dict, Any, List, Optional
 
 # Add project root to path
-sys.path.insert(0, '.')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from main import GameEngine, GameConfig, Card
 
@@ -240,10 +241,11 @@ def auto_respond(engine: GameEngine, pending):
     elif pending.type == "fourth_place_bonus":
         engine.provide_input("GOLD")
 
+    elif pending.type == "grace_priority":
+        engine.provide_input(False)  # Skip grace priority
+
     elif pending.type == "worker_actions":
-        workers = ctx.get("available_workers", 0)
-        actions = ["TRADE"] * workers
-        engine.provide_input(actions)
+        engine.provide_input("TRADE")
 
 
 def main():

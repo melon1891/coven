@@ -1,4 +1,8 @@
 """Test 2 workers with smart VP Toppa strategy"""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import random
 from main import (
     Player, STRATEGIES, assign_random_strategy, deal_fixed_sets,

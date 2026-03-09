@@ -11,3 +11,22 @@ wheels/
 
 # Streamlit secrets (contains passwords)
 .streamlit/secrets.toml
+
+# Environment variables
+.env
+
+# Generated images
+card_preview_*.png
+cards_final.png
+
+# Game logs
+game_log.jsonl
+
+# Playwright MCP logs
+.playwright-mcp/
+
+# Print materials (large assets)
+print/
+
+# Windows artifacts
+nul
