@@ -13,14 +13,14 @@ RULES (A plan, NO TRUMP) implemented:
   - Players see 6 cards, declare target tricks (0..4),
     then "seal" 2 cards (unplayable), then play 4 tricks with remaining 4 cards.
 - Declaration match => +1 VP
-- Incremental action upgrades (UP_TRADE / UP_HUNT => level +1 up to 2)
+- Incremental action upgrades (UP_TRADE / UP_HUNT => level +1 up to 1)
 - Hiring: hires do NOT act this round, BUT wage IS paid starting this round
 - JSONL logging to game_log.jsonl
 """
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Optional, Any, Set
 import random
 import sys
 import json
@@ -34,20 +34,20 @@ TRICKS_PER_ROUND = 4               # play 4 tricks
 CARDS_PER_SET = 5                  # see 5 cards, seal 1, play 4
 SETS_PER_GAME = 6                  # match rounds
 REVEAL_UPGRADES = 5                # players + 1 (for 4p => 5)
-NUM_DECKS = 2                      # 2デッキ = 48カード (6ランク×4スート×2)
-TRUMP_COUNT = 4                    # 切り札4枚
+NUM_DECKS = 2                      # 2デッキ = 40カード (5ランク×4スート×2)
+TRUMP_COUNT = 2                    # 切り札2枚
 
 START_GOLD = 5
-WAGE_CURVE = [1, 1, 2, 2, 2, 3, 3, 3]  # 初期ワーカーの給料（8R対応）
-# アップグレードワーカーは取得時2金支払い、以後給料なし
-UPGRADE_WORKER_COST = 2  # 取得時コスト
+WAGE_CURVE = [1, 1, 1, 1, 2, 2, 2, 3]  # 初期ワーカーの給料（8R対応）
 INITIAL_WORKERS = 2  # 初期ワーカー数
-RESCUE_GOLD_FOR_4TH = 2
+MAX_WORKERS = 5      # ワーカー雇用上限
+RESCUE_GOLD_FOR_4TH = 1
 TAKE_GOLD_INSTEAD = 2
 DECLARATION_BONUS_VP = 1  # 宣言成功ボーナス（失敗ペナルティなし）
 
 # === 金貨→VP変換 ===
 GOLD_TO_VP_RATE = 2  # ゲーム終了時、2金貨 = 1VP に変換
+GOLD_TO_GRACE_RATE = 2  # ゲーム終了時、2金貨 = 1恩寵 に変換（恩寵→VP変換の前に適用）
 
 # === 負債ペナルティ設定 ===
 # 給与未払い1金につき何VPを失うか（2 = 1金不足で-2VP）
@@ -58,24 +58,21 @@ DEBT_PENALTY_CAP: Optional[int] = None
 # === 恩寵ポイントシステム ===
 # 恩寵機能のON/OFF設定（Falseにすると恩寵なしの旧バージョン動作に戻る）
 GRACE_ENABLED = True
-# 閾値ボーナス（累計ではなく、到達した最高の閾値のみ適用）
-GRACE_THRESHOLD_BONUS = [
-    (13, 8),   # 13点以上 → +8VP
-    (10, 5),   # 10点以上 → +5VP
-]
-# 恩寵消費効果: シール前に手札1枚をデッキトップと交換
-GRACE_HAND_SWAP_COST = 1
+# 恩寵→VP変換（5恩寵毎に3VP）
+GRACE_VP_PER_N = 5       # N恩寵毎に変換
+GRACE_VP_AMOUNT = 3      # 変換で得られるVP
+# 恩寵消費効果: シール前に手札全交換（3恩寵で5枚すべて引き直し）
+GRACE_HAND_SWAP_COST = 3
 # 恩寵獲得: 祈りアクション（ワーカー配置 → 恩寵）
 GRACE_PRAY_GAIN = 1  # 基礎獲得量
-# 恩寵獲得: 寄付アクション（金貨 → 恩寵、アップグレードで解放）
-GRACE_DONATE_COST = 2  # 2金 → 1恩寵
-GRACE_DONATE_GAIN = 1
-# 恩寵獲得: 儀式アクション（ワーカー → 恩寵、アップグレードで解放）
-GRACE_RITUAL_GAIN = 1  # 1ワーカー → 1恩寵
+# 恩寵獲得: 儀式アクション（ワーカー → 恩寵/金、アップグレードで解放）
+GRACE_RITUAL_GAIN = 1  # 基礎（旧定数、参照用）
 # 恩寵獲得: 宣言0成功
 GRACE_DECLARATION_ZERO_BONUS = 1
 # 恩寵獲得: トリテ0勝
 GRACE_ZERO_TRICKS_BONUS = 1
+# 金貨獲得: トリテ0勝
+ZERO_TRICKS_GOLD_BONUS = 1
 # 4位ボーナス: 恩寵選択時の獲得量
 GRACE_4TH_PLACE_BONUS = 2
 # 後出し権: トリック中に順番を最後に変更（1ラウンド1回）
@@ -85,6 +82,30 @@ GRACE_DEBT_REDUCTION_COST = 2
 
 # 基本アクション（PRAY は初期から使用可能）
 ACTIONS = ["TRADE", "HUNT", "RECRUIT", "PRAY"]
+
+# === ナショナルエコノミー式ワーカー配置 ===
+# 共通スポット（ブロッキング: 全体で1ワーカーのみ）
+SHARED_TRADE_GOLD = 2    # Trade: 2金
+SHARED_HUNT_VP = 1       # Hunt: 1VP
+SHARED_PRAY_GRACE = 1    # Pray: 1恩寵
+# オープンスポット（制限なし）
+RECRUIT_COST = 2          # Recruit: 2金→+1人
+# 個人スポット効果（アップグレードカードから）
+PERSONAL_TRADE_GOLD = 2   # UP_TRADE: 2金
+PERSONAL_HUNT_VP = 1      # UP_HUNT: 1VP
+PERSONAL_PRAY_GRACE = 1   # UP_PRAY: 1恩寵
+PERSONAL_RITUAL_GRACE = 2  # UP_RITUAL: 2恩寵 or 2金（選択）
+PERSONAL_RITUAL_GOLD = 2   # UP_RITUAL: 金選択時
+# 魔女個人スポット（強化効果）
+WITCH_BLACKROAD_GOLD = 2  # 黒路の魔女: 2金（Trade相当）
+WITCH_BLOODHUNT_VP = 1    # 血誓の討伐官: 1VP（Hunt相当）
+WITCH_NEGOTIATE_GRACE_COST = 1  # 交渉の魔女: 恩寵消費
+WITCH_NEGOTIATE_GOLD = 2       # 交渉の魔女: 金獲得
+WITCH_ZERO_GRACE = 3           # 予言者: 恩寵報酬
+WITCH_ZERO_GOLD = 3            # 予言者: 金報酬
+WITCH_ZERO_VP = 2              # 予言者: VP報酬
+# 恩寵による先行権コスト
+GRACE_PRIORITY_COST = 2   # 配置/選択順序の先行権
 
 # === CPU性格定義 ===
 # grace_awareness: 恩寵獲得の意識（0=無関心, 0.5=適度, 1=積極的）
@@ -104,7 +125,7 @@ STRATEGIES = {
         'name': 'VPつっぱ',
         'name_en': 'VP Toppa',
         'desc': 'ワーカー最大化、VP狩り',
-        'max_workers': 99,
+        'max_workers': 5,
         'prefer_gold': False,
         'hunt_ratio': 0.8,
         'accept_debt': 99,
@@ -264,11 +285,28 @@ class GameConfig:
 
 
 @dataclass
+class PlacementState:
+    """ナショナルエコノミー式ワーカー配置のラウンド内状態管理"""
+    shared_trade_taken: bool = False
+    shared_hunt_taken: bool = False
+    shared_pray_taken: bool = False
+    # プレイヤー別: 使用済み個人スポットのインデックスセット（共有ボード上のスポット）
+    personal_spots_used: Dict[str, Set[int]] = field(default_factory=dict)
+    # プレイヤー別: 残りワーカー数
+    workers_remaining: Dict[str, int] = field(default_factory=dict)
+    # 配置順序（トリック勝数順）
+    placement_order: List[Any] = field(default_factory=list)  # List[Player]
+    # 全プレイヤー参照（共有スポット方式で使用）
+    all_players: List[Any] = field(default_factory=list)  # List[Player]
+
+
+@dataclass
 class Player:
     name: str
     is_bot: bool = False
     rng: random.Random = field(default_factory=random.Random)
     strategy: Optional[str] = None  # CPU性格: CONSERVATIVE, VP_AGGRESSIVE, BALANCED, DEBT_AVOID
+    ai_bot: bool = False  # AI (Anthropic Haiku) for decisions
 
     gold: int = START_GOLD
     vp: int = 0
@@ -276,19 +314,12 @@ class Player:
     # Workers
     basic_workers_total: int = INITIAL_WORKERS
     basic_workers_new_hires: int = 0  # hires that become active next round
-    upgraded_workers: int = 0  # workers that don't pay wages (acquired via RECRUIT_INSTANT)
 
-    # Action levels (incremental improvements, 0..2)
-    trade_level: int = 0  # yield 2..4
-    hunt_level: int = 0   # yield 1..3
+    # 個人ワーカースポット（アップグレードカードから取得）
+    personal_spots: List[str] = field(default_factory=list)
 
-    # Recruit upgrades (pick one of them, overwrite allowed)
-    recruit_upgrade: Optional[str] = None  # "RECRUIT_WAGE_DISCOUNT" or None
-
-    # 恩寵システム用アップグレード
-    pray_level: int = 0  # 祈りレベル（0-2）: 恩寵獲得量 = 1 + pray_level
-    has_donate: bool = False  # 寄付アクション解放済み
-    has_ritual: bool = False  # 儀式アクション解放済み
+    # Lv2化したスポット名のセット（ここに含まれない2枚持ちは別枠Lv1×2）
+    leveled_spots: Set[str] = field(default_factory=set)
 
     # Permanent witches (flavor for tie-break)
     witches: List[str] = field(default_factory=list)
@@ -296,23 +327,19 @@ class Player:
     # Grace points (恩寵ポイント)
     grace_points: int = 0
 
+    # 累積負債（ゲーム終了時にペナルティ適用）
+    accumulated_debt: int = 0
+
+    # 儀式で消費されたワーカー数（ラウンド内追跡、給料計算用）
+    ritual_consumed_this_round: int = 0
+
     # Trick-taking round state
     tricks_won_this_round: int = 0
-    declared_tricks: int = 0
+    declared_tricks: Optional[int] = None
     used_last_play_this_round: bool = False  # 後出し権使用済みフラグ
 
     # Fixed hand: SETS_PER_GAME sets x CARDS_PER_SET cards
     sets: List[List[Card]] = field(default_factory=list)
-
-    def trade_yield(self) -> int:
-        return 2 + self.trade_level * 2  # 基礎2, Lv1=4, Lv2=6
-
-    def hunt_yield(self) -> int:
-        return 1 + self.hunt_level
-
-    def pray_yield(self) -> int:
-        """祈りアクションで獲得する恩寵ポイント（Lv0=1, Lv1=2, Lv2=3）"""
-        return GRACE_PRAY_GAIN + self.pray_level
 
     def permanent_witch_count(self) -> int:
         return len(self.witches)
@@ -331,19 +358,12 @@ def snapshot_players(players: List[Player]) -> List[Dict[str, Any]]:
             "grace_points": p.grace_points,  # 恩寵ポイント
             "workers": p.basic_workers_total,
             "new_hires_pending": p.basic_workers_new_hires,
-            "upgraded_workers": p.upgraded_workers,
-            "trade_level": p.trade_level,
-            "hunt_level": p.hunt_level,
-            "trade_yield": p.trade_yield(),
-            "hunt_yield": p.hunt_yield(),
-            "recruit_upgrade": p.recruit_upgrade,
-            "pray_level": p.pray_level,  # 祈りレベル（0-2）
-            "pray_yield": p.pray_yield(),  # 祈りの獲得恩寵
-            "has_donate": p.has_donate,  # 寄付アクション解放
-            "has_ritual": p.has_ritual,  # 儀式アクション解放
+            "personal_spots": p.personal_spots[:],
+            "leveled_spots": list(p.leveled_spots),
             "witches": p.witches[:],
             "declared_tricks": p.declared_tricks,
             "tricks_won": p.tricks_won_this_round,
+            "accumulated_debt": p.accumulated_debt,
         })
     return snap
 
@@ -375,12 +395,13 @@ def print_state(players: List[Player], round_no: int) -> None:
         base_info = (
             f"{p.name:10s} | Gold={p.gold:2d} VP={p.vp:2d} "
             f"Workers={p.basic_workers_total:2d} (pending={p.basic_workers_new_hires:2d}) "
-            f"TradeY={p.trade_yield()}(Lv{p.trade_level}) "
-            f"HuntY={p.hunt_yield()}(Lv{p.hunt_level}) "
+            f"Spots={len(p.personal_spots)} "
             f"Witches={p.permanent_witch_count()}"
         )
         if GRACE_ENABLED:
             base_info += f" Grace={p.grace_points}"
+        if p.accumulated_debt > 0:
+            base_info += f" Debt={p.accumulated_debt}"
         print(base_info)
     print("=" * 72)
 
@@ -391,7 +412,7 @@ def deal_fixed_sets(
     players: List[Player],
     seed: int,
     logger: Optional[JsonlLogger],
-    max_rank: int = 6,
+    max_rank: int = 5,
     num_decks: int = NUM_DECKS,
 ) -> None:
     """
@@ -402,7 +423,7 @@ def deal_fixed_sets(
     deck: List[Card] = []
     for _ in range(num_decks):
         deck.extend([Card(s, r) for s in SUITS for r in range(1, max_rank + 1)])
-    # 切り札カード追加（ランクなし、4枚）
+    # 切り札カード追加（ランクなし、2枚）
     trumps = [Card("Trump", 0) for _ in range(TRUMP_COUNT)]
     deck.extend(trumps)
     rng.shuffle(deck)
@@ -423,12 +444,12 @@ def deal_round_cards(
     round_no: int,
     rng: random.Random,
     logger: Optional[JsonlLogger],
-    max_rank: int = 6,
+    max_rank: int = 5,
     num_decks: int = NUM_DECKS,
 ) -> Tuple[Dict[str, List[Card]], List[Card]]:
     """
     ラウンドごとにデッキをリシャッフルして配札。
-    2デッキ（48カード）+ 切り札4枚 = 52枚
+    2デッキ（40カード）+ 切り札2枚 = 42枚
     4人×5枚 = 20枚必要
 
     Returns:
@@ -456,7 +477,7 @@ def deal_round_cards(
             "round": round_no + 1,
             "hands": {name: [str(c) for c in cards] for name, cards in round_hands.items()},
             "cards_per_player": CARDS_PER_SET,
-            "deck_size": num_decks * 24 + TRUMP_COUNT,
+            "deck_size": num_decks * 4 * max_rank + TRUMP_COUNT,
             "remaining_deck_size": len(deck),
         })
 
@@ -469,22 +490,19 @@ def deal_round_cards(
 ALL_UPGRADES = [
     "UP_TRADE",
     "UP_HUNT",
-    "RECRUIT_INSTANT",
-    "RECRUIT_WAGE_DISCOUNT",
     "UP_PRAY",     # 祈り強化: 恩寵獲得量+1
-    "UP_DONATE",   # 寄付アクション解放
-    "UP_RITUAL",   # 儀式アクション解放
+    "UP_RITUAL",   # 儀式アクション解放（2恩寵 or 2金 選択）
 ]
 
 # 魔女カード（ラウンド3のみ登場）
 ALL_WITCHES = [
-    "WITCH_BLACKROAD",   # 交易強化: TRADEで+2金
-    "WITCH_BLOODHUNT",   # 討伐強化: HUNTで+1VP
-    "WITCH_HERD",        # 雇用支援: 雇用ラウンド給料-1
-    "WITCH_TREASURE",    # 金貨変換: ゲーム終了時1金→1恩寵
-    "WITCH_BLESSING",    # 恩寵獲得: 毎ラウンド+1恩寵
-    "WITCH_PROPHET",     # 的中の魔女: 宣言成功時+1金
-    "WITCH_ZERO_MASTER", # 慎重な予言者: 宣言0成功時+2恩寵（通常+1）
+    "WITCH_BLACKROAD",   # 黒路の魔女: パッシブ(個人交易+1金)
+    "WITCH_BLOODHUNT",   # 血誓の討伐官: パッシブ(個人討伐+1VP)
+    "WITCH_HERD",        # 群導の魔女: 毎R給料-1
+    "WITCH_NEGOTIATE",   # 交渉の魔女: 個人スポット(1恩寵→3金)
+    "WITCH_BLESSING",    # 祈祷の魔女: 毎R+1恩寵
+    "WITCH_MIRROR",      # 鏡の魔女: 他者宣言成功時+1金
+    "WITCH_ZERO_MASTER", # 慎重な予言者: 宣言0成功時3恩寵/2金/1VPから選択
 ]
 
 # デフォルトで有効なアップグレード（魔女を除く）
@@ -495,13 +513,10 @@ WITCH_ROUND = 2  # ラウンド3 = index 2
 
 # 各アップグレードのプール内の枚数
 UPGRADE_POOL_COUNTS = {
-    "UP_TRADE": 6,
-    "UP_HUNT": 6,
-    "RECRUIT_INSTANT": 2,
-    "RECRUIT_WAGE_DISCOUNT": 2,
-    "UP_PRAY": 2,    # 祈り強化
-    "UP_DONATE": 2,  # 寄付アクション解放
-    "UP_RITUAL": 2,  # 儀式アクション解放
+    "UP_TRADE": 5,
+    "UP_HUNT": 5,
+    "UP_PRAY": 5,    # 祈り強化
+    "UP_RITUAL": 5,  # 儀式アクション解放
 }
 
 # 魔女カードのプール内の枚数
@@ -509,9 +524,9 @@ WITCH_POOL_COUNTS = {
     "WITCH_BLACKROAD": 1,
     "WITCH_BLOODHUNT": 1,
     "WITCH_HERD": 1,
-    "WITCH_TREASURE": 1,
+    "WITCH_NEGOTIATE": 1,
     "WITCH_BLESSING": 1,
-    "WITCH_PROPHET": 1,
+    "WITCH_MIRROR": 1,
     "WITCH_ZERO_MASTER": 1,
 }
 
@@ -580,19 +595,16 @@ def reveal_upgrades(rng: random.Random, n: int, enabled_upgrades: Optional[List[
 
 def upgrade_name(u: str) -> str:
     mapping = {
-        "UP_TRADE": "交易拠点 改善（レベル+1）",
-        "UP_HUNT": "魔物討伐 改善（レベル+1）",
-        "RECRUIT_INSTANT": "見習い魔女派遣（2金で+1人）",
-        "RECRUIT_WAGE_DISCOUNT": "育成負担軽減の護符（雇用ターン給料軽減）",
-        "UP_PRAY": "祈りの祭壇 強化（レベル+1）",
-        "UP_DONATE": "寄付の祭壇（寄付アクション解放）",
-        "UP_RITUAL": "儀式の祭壇（儀式アクション解放）",
+        "UP_TRADE": "交易拠点（個人交易スポット）",
+        "UP_HUNT": "魔物討伐（個人討伐スポット）",
+        "UP_PRAY": "祈りの祭壇（個人祈りスポット）",
+        "UP_RITUAL": "儀式の祭壇（個人儀式スポット）",
         "WITCH_BLACKROAD": "《黒路の魔女》",
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
         "WITCH_HERD": "《群導の魔女》",
-        "WITCH_TREASURE": "《財宝変換の魔女》",
+        "WITCH_NEGOTIATE": "《交渉の魔女》",
         "WITCH_BLESSING": "《祈祷の魔女》",
-        "WITCH_PROPHET": "《的中の魔女》",
+        "WITCH_MIRROR": "《鏡の魔女》",
         "WITCH_ZERO_MASTER": "《慎重な予言者》",
     }
     return mapping.get(u, u)
@@ -601,20 +613,17 @@ def upgrade_name(u: str) -> str:
 def upgrade_description(u: str) -> str:
     """Return detailed description for an upgrade card."""
     descriptions = {
-        "UP_TRADE": "交易アクションの収益が+2金貨増加します。最大レベル2まで強化可能（基礎2→Lv1:4→Lv2:6）。",
-        "UP_HUNT": "討伐アクションの獲得VPが+1増加します。最大レベル2まで強化可能。",
-        "RECRUIT_INSTANT": "2金支払い、即座に見習い1人を獲得。以後給料支払い不要。",
-        "RECRUIT_WAGE_DISCOUNT": "雇用したターンの給料支払いが軽減されます。",
-        "UP_PRAY": "【祈り強化】祈りアクションの恩寵獲得+1。最大レベル2まで強化可能（基礎1→Lv1:2→Lv2:3）。",
-        "UP_DONATE": "【寄付アクション解放】2金 → 1恩寵に変換可能。金貨を恩寵に変えたいときに。",
-        "UP_RITUAL": "【儀式アクション解放】1ワーカー → 1恩寵。ワーカーで追加の恩寵獲得スロットを得る。",
-        "WITCH_BLACKROAD": "【効果】TRADEを行うたび、追加で+2金",
-        "WITCH_BLOODHUNT": "【効果】HUNTを行うたび、追加で+1VP",
-        "WITCH_HERD": "【効果】見習いを雇用したラウンド、給料合計-1",
-        "WITCH_TREASURE": "【効果】ゲーム終了時、1金貨につき1恩寵に変換可能",
+        "UP_TRADE": "個人交易スポット。毎ラウンド1ワーカーを配置して2金獲得。共通交易がブロックされても使える。",
+        "UP_HUNT": "個人討伐スポット。毎ラウンド1ワーカーを配置して1VP獲得。共通討伐がブロックされても使える。",
+        "UP_PRAY": "個人祈りスポット。毎ラウンド1ワーカーを配置して1恩寵獲得。",
+        "UP_RITUAL": f"個人儀式スポット。{PERSONAL_RITUAL_GRACE}恩寵 or {PERSONAL_RITUAL_GOLD}金を選択。配置したワーカーは永久に失われる。",
+        "WITCH_BLACKROAD": "【効果】パッシブ: 個人交易スポット使用時、獲得金+1",
+        "WITCH_BLOODHUNT": "【効果】パッシブ: 個人討伐スポット使用時、獲得VP+1",
+        "WITCH_HERD": "【効果】毎ラウンド給料合計-1（パッシブ）",
+        "WITCH_NEGOTIATE": f"【効果】個人スポット。1恩寵消費→{WITCH_NEGOTIATE_GOLD}金獲得",
         "WITCH_BLESSING": "【効果】毎ラウンド終了時、+1恩寵",
-        "WITCH_PROPHET": "【効果】宣言成功時、追加で+1金",
-        "WITCH_ZERO_MASTER": "【効果】宣言0成功時、+2恩寵（通常+1の代わり）",
+        "WITCH_MIRROR": "【効果】他プレイヤーの宣言成功時、+1金（パッシブ）",
+        "WITCH_ZERO_MASTER": f"【効果】宣言0成功時、{WITCH_ZERO_GRACE}恩寵/{WITCH_ZERO_GOLD}金/{WITCH_ZERO_VP}VPから選択",
     }
     return descriptions.get(u, "説明なし")
 
@@ -639,11 +648,11 @@ WITCH_FLAVOR = {
 見習いたちは彼女の合図ひとつで動く。
 だが、誰も彼女に逆らおうとはしない。""",
 
-    "WITCH_TREASURE": """《財宝変換の魔女》
-役割：終盤・恩寵獲得
+    "WITCH_NEGOTIATE": """《交渉の魔女》
+役割：恩寵→金貨変換
 
-彼女の魔法は、金貨を協会への恩寵に変える。
-富を捧げることで、神の加護を得る。""",
+協会への恩寵を担保に、有利な取引を成立させる。
+彼女の交渉術の前では、どんな商人も頷くしかない。""",
 
     "WITCH_BLESSING": """《祈祷の魔女》
 役割：恩寵獲得
@@ -651,75 +660,100 @@ WITCH_FLAVOR = {
 協会への忠誠を示す者に、彼女は静かに恩寵を与える。
 毎ラウンド終了時、その祝福は確実に訪れる。""",
 
-    "WITCH_PROPHET": """《的中の魔女》
-役割：予言・トリック宣言強化
+    "WITCH_MIRROR": """《鏡の魔女》
+役割：他者の成功を映す
 
-彼女の予言は必ず当たる。
-宣言を成功させた者に、金貨という形で報いを与える。""",
+彼女の鏡は他者の成功を映し出し、その輝きを金貨に変える。
+他者が栄えるほど、鏡の持ち主もまた潤う。""",
 
     "WITCH_ZERO_MASTER": """《慎重な予言者》
-役割：慎重な戦略・恩寵獲得
+役割：慎重な戦略・多様な報酬
 
 何も取らないと宣言し、それを守る者を彼女は讃える。
-慎重な戦いこそが、最も恩寵に近い道だと知っているから。""",
+慎重な戦いには、恩寵・富・名誉の三つの道が開かれる。""",
 }
 
 
 def can_take_upgrade(player: Player, u: str) -> bool:
-    if u == "UP_TRADE":
-        return player.trade_level < 2
-    if u == "UP_HUNT":
-        return player.hunt_level < 2
-    if u == "UP_PRAY":
-        # 祈り強化は恩寵システム有効時のみ、かつレベル2未満の場合のみ取得可能
-        return GRACE_ENABLED and player.pray_level < 2
-    if u == "UP_DONATE":
-        # 寄付アクション解放は恩寵システム有効時のみ、かつまだ持っていない場合のみ
-        return GRACE_ENABLED and not player.has_donate
-    if u == "UP_RITUAL":
-        # 儀式アクション解放は恩寵システム有効時のみ、かつまだ持っていない場合のみ
-        return GRACE_ENABLED and not player.has_ritual
+    """アップグレード取得可否（個人スポット方式: 同種2枚まで=Lv2）"""
+    if u in ("UP_TRADE", "UP_HUNT", "UP_PRAY", "UP_RITUAL"):
+        # 同じスポットは最大2枚（Lv1→Lv2）
+        if player.personal_spots.count(u) >= 2:
+            return False
+        # 恩寵系はGRACE_ENABLED必要
+        if u in ("UP_PRAY", "UP_RITUAL"):
+            return GRACE_ENABLED
+        return True
     return True
 
 
-def apply_upgrade(player: Player, u: str) -> None:
-    if u == "UP_TRADE":
-        player.trade_level = min(2, player.trade_level + 1)
-    elif u == "UP_HUNT":
-        player.hunt_level = min(2, player.hunt_level + 1)
-    elif u == "RECRUIT_INSTANT":
-        # 2金支払い、即座にワーカー+1（以後給料なし）
-        player.gold -= UPGRADE_WORKER_COST
-        player.basic_workers_total += 1
-        player.upgraded_workers += 1
-    elif u == "RECRUIT_WAGE_DISCOUNT":
-        player.recruit_upgrade = u
-    elif u == "UP_PRAY":
-        # 祈りの祭壇をアップグレード（恩寵獲得量+1）
-        player.pray_level = min(2, player.pray_level + 1)
-    elif u == "UP_DONATE":
-        # 寄付アクション解放
-        player.has_donate = True
-    elif u == "UP_RITUAL":
-        # 儀式アクション解放
-        player.has_ritual = True
+def _bot_choose_level_up(player: Player, u: str) -> bool:
+    """Botが2枚目のアップグレードをLv2にするか別枠にするか判断。True=Lv2, False=別枠"""
+    current_workers = player.basic_workers_total + player.basic_workers_new_hires
+    # 儀式はワーカー消費するのでLv2が効率的
+    if u == "UP_RITUAL":
+        return True
+    # ワーカーに余裕があれば別枠（2回使える）、なければLv2（1回で高効率）
+    if current_workers >= 4:
+        return False  # 別枠
+    return True  # Lv2
+
+
+def apply_upgrade(player: Player, u: str, level_up: Optional[bool] = None) -> None:
+    """アップグレード適用（個人スポット方式）
+    level_up: 2枚目の場合 True=Lv2化, False=別枠Lv1×2, None=1枚目（自動）
+    """
+    if u in ("UP_TRADE", "UP_HUNT", "UP_PRAY", "UP_RITUAL"):
+        is_second = player.personal_spots.count(u) >= 1
+        player.personal_spots.append(u)
+        if is_second and level_up:
+            player.leveled_spots.add(u)
     elif u.startswith("WITCH_"):
         player.witches.append(u)
+        # 個人スポットとしても機能する魔女（BLACKROAD/BLOODHUNTはパッシブ化済み）
+        if u == "WITCH_NEGOTIATE":
+            player.personal_spots.append(u)
+
+
+def choose_level_up_or_separate(player: Player, u: str) -> bool:
+    """2枚目のアップグレード取得時にLv2化か別枠かを選択。True=Lv2, False=別枠"""
+    if player.is_bot:
+        return _bot_choose_level_up(player, u)
+
+    upgrade_names = {
+        "UP_TRADE": "個人交易",
+        "UP_HUNT": "個人討伐",
+        "UP_PRAY": "個人祈り",
+        "UP_RITUAL": "個人儀式",
+    }
+    name = upgrade_names.get(u, u)
+    print(f"\n{player.name}, {name}の2枚目を獲得します。強化方法を選んでください:")
+    print(f"  1. Lv2に強化（1スポット、効果+1）")
+    print(f"  2. 別枠配置（2つの独立したLv1スポット）")
+    while True:
+        s = input("1 or 2: ").strip()
+        if s == "1":
+            return True
+        if s == "2":
+            return False
+        print("1か2を入力してください。")
 
 
 def calc_expected_wage(player: Player, round_no: int) -> int:
     """次のラウンドで発生する給料を計算（初期ワーカーのみ給料発生）"""
-    # 初期ワーカー = 総ワーカー - アップグレードワーカー
-    total_workers = player.basic_workers_total + player.basic_workers_new_hires
-    initial_workers = total_workers - player.upgraded_workers
-    initial_workers = max(0, min(INITIAL_WORKERS, initial_workers))
+    initial_workers = min(INITIAL_WORKERS, player.basic_workers_total + player.basic_workers_new_hires)
     return initial_workers * WAGE_CURVE[round_no]
 
 
-def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 0) -> str:
+def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 0, all_players: Optional[List[Player]] = None) -> str:
     available = [u for u in revealed if can_take_upgrade(player, u)]
 
     if player.is_bot:
+        if player.ai_bot and available:
+            from ai_bot import ai_choose_upgrade
+            result = ai_choose_upgrade(player, revealed, available, round_no, all_players)
+            if result is not None:
+                return result
         if not available:
             return "GOLD"
 
@@ -729,14 +763,13 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
         expected_wage = calc_expected_wage(player, round_no)
         grace_awareness = strat.get('grace_awareness', 0.5)
 
-        # 恩寵閾値への近さをチェック（全性格共通）
+        # 次の5恩寵境界への近さをチェック（全性格共通）
         grace_near_threshold = False
         if GRACE_ENABLED:
-            for threshold, _ in GRACE_THRESHOLD_BONUS:
-                diff = threshold - player.grace_points
-                if 0 < diff <= 3:  # 閾値まであと3点以内
-                    grace_near_threshold = True
-                    break
+            next_boundary = (player.grace_points // GRACE_VP_PER_N + 1) * GRACE_VP_PER_N
+            diff = next_boundary - player.grace_points
+            if 0 < diff <= 3:  # 次の5恩寵境界まであと3点以内
+                grace_near_threshold = True
 
         # 恩寵アップグレードの優先順位を判定する関数
         def pick_grace_upgrade():
@@ -745,8 +778,6 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
                 return 'UP_PRAY'
             if 'UP_RITUAL' in available:
                 return 'UP_RITUAL'
-            if 'UP_DONATE' in available:
-                return 'UP_DONATE'
             if 'WITCH_BLESSING' in available:
                 return 'WITCH_BLESSING'
             return None
@@ -766,8 +797,6 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
 
         # VPつっぱ: 常にアップグレード優先
         if player.strategy == 'VP_AGGRESSIVE':
-            if 'RECRUIT_INSTANT' in available and current_workers < strat['max_workers']:
-                return 'RECRUIT_INSTANT'
             # 恩寵アップグレードも考慮
             if grace_near_threshold:
                 grace_pick = pick_grace_upgrade()
@@ -788,11 +817,6 @@ def choose_upgrade_or_gold(player: Player, revealed: List[str], round_no: int = 
             grace_pick = pick_grace_upgrade()
             if grace_pick:
                 return grace_pick
-
-        # バランス/借金回避: ワーカー上限まで雇用、それ以外はアップグレード
-        if current_workers < strat['max_workers']:
-            if 'RECRUIT_INSTANT' in available:
-                return 'RECRUIT_INSTANT'
 
         # アップグレード優先度（恩寵意識を反映）
         # 閾値に近い場合は恩寵アップグレードを優先
@@ -852,6 +876,15 @@ def choose_4th_place_bonus(player: Player, logger: Optional[JsonlLogger] = None,
         return "GOLD"
 
     if player.is_bot:
+        if player.ai_bot:
+            from ai_bot import ai_choose_4th_place_bonus
+            result = ai_choose_4th_place_bonus(player, RESCUE_GOLD_FOR_4TH, GRACE_4TH_PLACE_BONUS)
+            if result is not None:
+                if result == "GRACE":
+                    player.grace_points += GRACE_4TH_PLACE_BONUS
+                else:
+                    player.gold += RESCUE_GOLD_FOR_4TH
+                return result
         # ボットの選択ロジック
         strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
 
@@ -860,12 +893,12 @@ def choose_4th_place_bonus(player: Player, logger: Optional[JsonlLogger] = None,
             player.grace_points += GRACE_4TH_PLACE_BONUS
             return "GRACE"
 
-        # 恩寵閾値に近い場合は恩寵を選択
-        for threshold, bonus in GRACE_THRESHOLD_BONUS:
-            diff = threshold - player.grace_points
-            if 0 < diff <= 2:  # 閾値まであと2点以内
-                player.grace_points += GRACE_4TH_PLACE_BONUS
-                return "GRACE"
+        # 次の5恩寵境界に近い場合は恩寵を選択
+        next_boundary = (player.grace_points // GRACE_VP_PER_N + 1) * GRACE_VP_PER_N
+        diff = next_boundary - player.grace_points
+        if 0 < diff <= 2:  # 次の5恩寵境界まであと2点以内
+            player.grace_points += GRACE_4TH_PLACE_BONUS
+            return "GRACE"
 
         # それ以外は金貨を選択
         player.gold += RESCUE_GOLD_FOR_4TH
@@ -889,8 +922,13 @@ def choose_4th_place_bonus(player: Player, logger: Optional[JsonlLogger] = None,
 
 # ======= Declaration (SEE 6 cards -> declare -> seal 2 -> play 4) =======
 
-def declare_tricks(player: Player, round_hand: List[Card], set_index: int) -> int:
+def declare_tricks(player: Player, round_hand: List[Card], set_index: int, all_players: Optional[List[Player]] = None) -> int:
     if player.is_bot:
+        if player.ai_bot:
+            from ai_bot import ai_declare_tricks
+            result = ai_declare_tricks(player, round_hand, set_index, all_players)
+            if result is not None:
+                return result
         # 切り札の枚数をカウント
         trump_count = sum(1 for c in round_hand if c.is_trump())
         non_trump = [c for c in round_hand if not c.is_trump()]
@@ -922,6 +960,63 @@ def declare_tricks(player: Player, round_hand: List[Card], set_index: int) -> in
         print("無効な宣言です。")
 
 
+def _choose_zero_master_reward(player: Player, force_bot: bool = False) -> str:
+    """慎重な予言者: 宣言0成功時の報酬選択（3恩寵/2金/1VP）"""
+    if player.is_bot or force_bot:
+        # Bot AI: 金不足なら金、恩寵閾値近ければ恩寵、それ以外VP
+        strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
+        expected_wage = 0
+        if strat.get('prefer_gold', False) or player.gold < 3:
+            return "GOLD"
+        grace_awareness = strat.get('grace_awareness', 0.5)
+        if grace_awareness > 0.5:
+            next_boundary = (player.grace_points // GRACE_VP_PER_N + 1) * GRACE_VP_PER_N
+            diff = next_boundary - player.grace_points
+            if diff <= WITCH_ZERO_GRACE:
+                return "GRACE"
+        return "VP"
+    # 人間プレイヤー
+    print(f"\n《慎重な予言者》宣言0成功！報酬を選んでください:")
+    print(f"  [1] +{WITCH_ZERO_GRACE}恩寵")
+    print(f"  [2] +{WITCH_ZERO_GOLD}金")
+    print(f"  [3] +{WITCH_ZERO_VP}VP")
+    while True:
+        s = input("番号を選択: ").strip()
+        if s == "1":
+            return "GRACE"
+        if s == "2":
+            return "GOLD"
+        if s == "3":
+            return "VP"
+        print("無効な入力です。1-3で選択してください。")
+
+
+def _choose_ritual_reward(player: Player, grace_amount: int = PERSONAL_RITUAL_GRACE,
+                           gold_amount: int = PERSONAL_RITUAL_GOLD,
+                           force_bot: bool = False) -> str:
+    """儀式の祭壇: 恩寵 or 金 を選択"""
+    if player.is_bot or force_bot:
+        strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
+        expected_wage = calc_expected_wage(player, 0)
+        if player.gold < expected_wage + 2:
+            return "gold"
+        grace_awareness = strat.get('grace_awareness', 0.5)
+        if grace_awareness > 0.4:
+            return "grace"
+        return "gold"
+    # 人間プレイヤー
+    print(f"\n儀式の祭壇: 報酬を選んでください:")
+    print(f"  [1] +{grace_amount}恩寵")
+    print(f"  [2] +{gold_amount}金")
+    while True:
+        s = input("番号を選択: ").strip()
+        if s == "1":
+            return "grace"
+        if s == "2":
+            return "gold"
+        print("無効な入力です。1-2で選択してください。")
+
+
 def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger], round_no: int) -> None:
     for p in players:
         if p.tricks_won_this_round == p.declared_tricks:
@@ -929,24 +1024,31 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
             p.vp += DECLARATION_BONUS_VP
             print(f"宣言成功: {p.name} が {p.declared_tricks} トリックを的中 -> +{DECLARATION_BONUS_VP} VP")
 
-            # WITCH_PROPHET: 宣言成功時+1金
-            gold_bonus = 0
-            if "WITCH_PROPHET" in p.witches:
-                gold_bonus = 1
-                p.gold += gold_bonus
-                print(f"  (《的中の魔女》効果: +{gold_bonus}金)")
-
-            # 恩寵システム: 宣言0成功で恩寵ボーナス
+            # ピタリ賞: 宣言成功で+1恩寵
             grace_bonus = 0
+            if GRACE_ENABLED:
+                grace_bonus = 1
+                p.grace_points += 1
+                print(f"  (ピタリ賞: +1恩寵)")
+
+            gold_bonus = 0
+
+            # 恩寵システム: 宣言0成功で追加恩寵ボーナス
             if GRACE_ENABLED and p.declared_tricks == 0:
-                # WITCH_ZERO_MASTER: 宣言0成功時+2恩寵（通常+1の代わり）
                 if "WITCH_ZERO_MASTER" in p.witches:
-                    grace_bonus = 2
-                    print(f"  (《慎重な予言者》効果: +{grace_bonus}恩寵)")
-                else:
-                    grace_bonus = GRACE_DECLARATION_ZERO_BONUS
-                    print(f"  (宣言0成功ボーナス: +{grace_bonus} 恩寵)")
-                p.grace_points += grace_bonus
+                    # 慎重な予言者: 3恩寵/2金/1VPから選択
+                    choice = _choose_zero_master_reward(p)
+                    if choice == "GRACE":
+                        p.grace_points += WITCH_ZERO_GRACE
+                        grace_bonus += WITCH_ZERO_GRACE
+                        print(f"  (《慎重な予言者》効果: +{WITCH_ZERO_GRACE}恩寵)")
+                    elif choice == "GOLD":
+                        p.gold += WITCH_ZERO_GOLD
+                        gold_bonus += WITCH_ZERO_GOLD
+                        print(f"  (《慎重な予言者》効果: +{WITCH_ZERO_GOLD}金)")
+                    elif choice == "VP":
+                        p.vp += WITCH_ZERO_VP
+                        print(f"  (《慎重な予言者》効果: +{WITCH_ZERO_VP}VP)")
 
             if logger:
                 logger.log("declaration_bonus", {
@@ -961,19 +1063,32 @@ def apply_declaration_bonus(players: List[Player], logger: Optional[JsonlLogger]
                     "gold_bonus": gold_bonus,
                 })
 
-    # 恩寵システム: トリテ0勝で恩寵ボーナス（宣言0成功とは別）
+    # 恩寵システム: トリテ0勝で恩寵+金貨ボーナス（宣言0成功とは別）
     if GRACE_ENABLED:
         for p in players:
             if p.tricks_won_this_round == 0:
                 p.grace_points += GRACE_ZERO_TRICKS_BONUS
-                print(f"0勝ボーナス: {p.name} がトリック0勝 -> +{GRACE_ZERO_TRICKS_BONUS} 恩寵")
+                p.gold += ZERO_TRICKS_GOLD_BONUS
+                print(f"0勝ボーナス: {p.name} がトリック0勝 -> +{GRACE_ZERO_TRICKS_BONUS} 恩寵, +{ZERO_TRICKS_GOLD_BONUS} 金")
                 if logger:
                     logger.log("grace_zero_tricks_bonus", {
                         "round": round_no + 1,
                         "player": p.name,
                         "grace_gained": GRACE_ZERO_TRICKS_BONUS,
+                        "gold_gained": ZERO_TRICKS_GOLD_BONUS,
                         "grace_points": p.grace_points,
                     })
+
+    # WITCH_MIRROR: 他プレイヤーの宣言成功時+1金
+    others_success_count = sum(1 for p in players if p.tricks_won_this_round == p.declared_tricks)
+    for p in players:
+        if "WITCH_MIRROR" in p.witches:
+            # 自分の成功分を除外
+            own_success = 1 if p.tricks_won_this_round == p.declared_tricks else 0
+            mirror_gold = others_success_count - own_success
+            if mirror_gold > 0:
+                p.gold += mirror_gold
+                print(f"《鏡の魔女》効果: {p.name} → 他者{mirror_gold}人成功 → +{mirror_gold}金")
 
 
 def grace_hand_swap(
@@ -985,38 +1100,40 @@ def grace_hand_swap(
     round_no: int = 0
 ) -> bool:
     """
-    恩寵消費で手札1枚をデッキトップと交換。
-    シール前に使用可能。1恩寵 = 1枚交換。
+    恩寵消費で手札全交換。
+    シール前に使用可能。3恩寵 = 手札5枚を全て山に戻し、新しい5枚を引く。
     Returns True if swap was performed.
     """
     if not GRACE_ENABLED:
         return False
     if player.grace_points < GRACE_HAND_SWAP_COST:
         return False
-    if len(deck) == 0:
+    if len(deck) < len(hand):
         return False
 
     if player.is_bot:
-        # ボット: 最低ランクのカードを持っていて、かつ恩寵に余裕がある場合に交換を検討
+        # ボット: 手札の平均ランクが低い場合に全交換を検討
         non_trump = [c for c in hand if not c.is_trump()]
         if not non_trump:
             return False
-        worst_card = min(non_trump, key=lambda c: c.rank)
-        # ランクが5以下で、恩寵が2以上ある場合のみ交換（強化: 3以下→5以下、3以上→2以上）
-        if worst_card.rank <= 5 and player.grace_points >= 2:
-            # 交換実行
-            player.grace_points -= GRACE_HAND_SWAP_COST
-            hand.remove(worst_card)
-            new_card = deck.pop(0)
-            hand.append(new_card)
-            deck.append(worst_card)
+        avg_rank = sum(c.rank for c in non_trump) / len(non_trump)
+        # 平均ランク2.5以下かつ恩寵に余裕がある場合のみ交換
+        if avg_rank <= 2.5 and player.grace_points >= GRACE_HAND_SWAP_COST + 1:
+            old_hand = hand[:]
+            # 手札を全て山に戻す
+            deck.extend(hand)
+            hand.clear()
             rng.shuffle(deck)
+            # 新しい手札を引く
+            for _ in range(len(old_hand)):
+                hand.append(deck.pop(0))
+            player.grace_points -= GRACE_HAND_SWAP_COST
             if logger:
                 logger.log("grace_hand_swap", {
                     "round": round_no + 1,
                     "player": player.name,
-                    "swapped_out": str(worst_card),
-                    "swapped_in": str(new_card),
+                    "swapped_out": [str(c) for c in old_hand],
+                    "swapped_in": [str(c) for c in hand],
                     "grace_remaining": player.grace_points,
                 })
             return True
@@ -1024,45 +1141,30 @@ def grace_hand_swap(
 
     # 人間プレイヤー
     print(f"\n{player.name} 恩寵ポイント: {player.grace_points}")
-    print(f"手札交換可能 (コスト: {GRACE_HAND_SWAP_COST}恩寵)")
+    print(f"手札全交換可能 (コスト: {GRACE_HAND_SWAP_COST}恩寵、手札{len(hand)}枚を全て引き直し)")
     print("現在の手札:", " ".join(str(c) for c in hand))
-    while True:
-        s = input("交換するカードを入力 (例: S03) または Enter でスキップ: ").strip().upper()
-        if s == "":
-            return False
+    s = input("全交換しますか? (y/N): ").strip().lower()
+    if s != "y":
+        return False
 
-        suit_map = {"S": "Spade", "H": "Heart", "D": "Diamond", "C": "Club", "T": "Trump"}
-        if len(s) < 2 or s[0] not in suit_map:
-            print("無効な入力です。")
-            continue
-        try:
-            rank = int(s[1:])
-        except ValueError:
-            print("無効な入力です。")
-            continue
-        chosen = Card(suit_map[s[0]], rank)
-        if chosen not in hand:
-            print("そのカードは持っていません。")
-            continue
-
-        # 交換実行
-        player.grace_points -= GRACE_HAND_SWAP_COST
-        hand.remove(chosen)
-        new_card = deck.pop(0)
-        hand.append(new_card)
-        deck.append(chosen)
-        rng.shuffle(deck)
-        print(f"交換完了: {chosen} → {new_card}")
-        print(f"残り恩寵: {player.grace_points}")
-        if logger:
-            logger.log("grace_hand_swap", {
-                "round": round_no + 1,
-                "player": player.name,
-                "swapped_out": str(chosen),
-                "swapped_in": str(new_card),
-                "grace_remaining": player.grace_points,
-            })
-        return True
+    old_hand = hand[:]
+    deck.extend(hand)
+    hand.clear()
+    rng.shuffle(deck)
+    for _ in range(len(old_hand)):
+        hand.append(deck.pop(0))
+    player.grace_points -= GRACE_HAND_SWAP_COST
+    print(f"全交換完了: {' '.join(str(c) for c in old_hand)} → {' '.join(str(c) for c in hand)}")
+    print(f"残り恩寵: {player.grace_points}")
+    if logger:
+        logger.log("grace_hand_swap", {
+            "round": round_no + 1,
+            "player": player.name,
+            "swapped_out": [str(c) for c in old_hand],
+            "swapped_in": [str(c) for c in hand],
+            "grace_remaining": player.grace_points,
+        })
+    return True
 
 
 def seal_cards(player: Player, hand: List[Card], set_index: int) -> List[Card]:
@@ -1078,6 +1180,13 @@ def seal_cards(player: Player, hand: List[Card], set_index: int) -> List[Card]:
         return []
 
     if player.is_bot:
+        if player.ai_bot:
+            from ai_bot import ai_seal_cards
+            result = ai_seal_cards(player, hand[:], player.declared_tricks)
+            if result is not None:
+                for c in result:
+                    hand.remove(c)
+                return result
         # bot heuristic: seal the two lowest ranks, but never seal trump cards
         non_trump = [c for c in hand if not c.is_trump()]
         # 切り札以外から最低ランクを選ぶ
@@ -1091,11 +1200,11 @@ def seal_cards(player: Player, hand: List[Card], set_index: int) -> List[Card]:
             hand.remove(c)
         return sealed
 
-    print(f"\n{player.name} {need_seal}枚を封印してください（このラウンドは使用不可）")
+    print(f"\n{player.name} {need_seal}枚を公開封印してください（このラウンドは使用不可、全員に公開）")
     print("手札:", " ".join(str(c) for c in hand))
     sealed: List[Card] = []
     while len(sealed) < need_seal:
-        s = input(f"封印するカードを選択 ({len(sealed)+1}/{need_seal}) 例: S13/H07/D01/C10/T01: ").strip().upper()
+        s = input(f"公開封印するカードを選択 ({len(sealed)+1}/{need_seal}) 例: S13/H07/D01/C10/T01: ").strip().upper()
         suit_map = {"S": "Spade", "H": "Heart", "D": "Diamond", "C": "Club", "T": "Trump"}
         if len(s) < 2 or s[0] not in suit_map:
             print("無効な入力です。")
@@ -1165,10 +1274,15 @@ def legal_cards(hand: List[Card], lead_card: Optional[Card]) -> List[Card]:
         return hand[:]  # フォローできない → 切り札含め何でもOK
 
 
-def choose_card(player: Player, lead_card: Optional[Card], hand: List[Card]) -> Card:
+def choose_card(player: Player, lead_card: Optional[Card], hand: List[Card], trick_plays: Optional[List[Tuple[Player, Card]]] = None, all_players: Optional[List[Player]] = None) -> Card:
     legal = legal_cards(hand, lead_card)
 
     if player.is_bot:
+        if player.ai_bot:
+            from ai_bot import ai_choose_card
+            result = ai_choose_card(player, lead_card, hand, legal, trick_plays, all_players)
+            if result is not None:
+                return result
         return player.rng.choice(legal)
 
     while True:
@@ -1230,6 +1344,7 @@ def run_trick_taking(
     for p in players:
         p.tricks_won_this_round = 0
         p.used_last_play_this_round = False
+        p.ritual_consumed_this_round = 0
 
     full_hands: Dict[str, List[Card]] = {p.name: players[i].sets[set_index][:] for i, p in enumerate(players)}
 
@@ -1258,7 +1373,7 @@ def run_trick_taking(
                 grace_hand_swap(p, hand, remaining_deck, rng, logger, round_no)
 
     need_seal = CARDS_PER_SET - TRICKS_PER_ROUND
-    print(f"\n--- 封印フェーズ ({need_seal}枚を封印) ---")
+    print(f"\n--- 公開封印フェーズ ({need_seal}枚を公開封印) ---")
     sealed_by_player: Dict[str, List[Card]] = {}
     playable_hands: Dict[str, List[Card]] = {}
     for p in players:
@@ -1283,12 +1398,12 @@ def run_trick_taking(
             "players": snapshot_players(players),
         })
 
-    # 他プレイヤーの封印カードを表示
-    print("\n--- 封印されたカード (全プレイヤー) ---")
+    # 他プレイヤーの公開封印カードを表示
+    print("\n--- 公開封印されたカード (全プレイヤー) ---")
     for p in players:
         print(f"  {p.name}: {', '.join(str(c) for c in sealed_by_player[p.name])}")
 
-    print(f"\n--- トリックテイキング ラウンド{round_no+1} ({CARDS_PER_SET}枚→封印{need_seal}枚→{TRICKS_PER_ROUND}トリック) ---")
+    print(f"\n--- トリックテイキング ラウンド{round_no+1} ({CARDS_PER_SET}枚→公開封印{need_seal}枚→{TRICKS_PER_ROUND}トリック) ---")
     print(f"このラウンドのリーダー: {players[leader_index].name}")
 
     leader = leader_index
@@ -1403,193 +1518,446 @@ def run_trick_taking(
     return leader_index
 
 
-def rank_players_for_upgrade(players: List[Player], leader_index: int) -> List[Player]:
+def _offer_grace_priority(
+    players: List[Player],
+    leader_index: int,
+    logger: Optional[JsonlLogger] = None,
+    round_no: int = 0,
+) -> Set[str]:
+    """
+    恩寵消費による先行権を提示。
+    同トリック数のプレイヤーがいる場合のみ意味がある。
+    Returns set of player names who used grace priority.
+    """
+    priority_users: Set[str] = set()
+
+    # 同トリック数のプレイヤーがいるかチェック
+    trick_counts = [p.tricks_won_this_round for p in players]
+    has_ties = len(trick_counts) != len(set(trick_counts))
+
+    if not has_ties:
+        return priority_users
+
+    for p in players:
+        if p.grace_points < GRACE_PRIORITY_COST:
+            continue
+
+        # 同トリック数の相手がいるか
+        tied = [q for q in players if q.name != p.name and q.tricks_won_this_round == p.tricks_won_this_round]
+        if not tied:
+            continue
+
+        if p.is_bot:
+            # Bot: 恩寵に余裕があれば先行権を使う
+            if p.grace_points >= GRACE_PRIORITY_COST + 2:
+                p.grace_points -= GRACE_PRIORITY_COST
+                priority_users.add(p.name)
+                if logger:
+                    logger.log("grace_priority", {
+                        "round": round_no + 1,
+                        "player": p.name,
+                        "cost": GRACE_PRIORITY_COST,
+                        "grace_remaining": p.grace_points,
+                    })
+        else:
+            print(f"\n{p.name}: 同トリック数のプレイヤーがいます。")
+            print(f"  恩寵 {GRACE_PRIORITY_COST} を消費して先行権を得ますか? (恩寵: {p.grace_points})")
+            s = input("  先行権を使う? (y/N): ").strip().lower()
+            if s == "y":
+                p.grace_points -= GRACE_PRIORITY_COST
+                priority_users.add(p.name)
+                print(f"  → {p.name} が先行権を獲得 (恩寵 -{GRACE_PRIORITY_COST})")
+                if logger:
+                    logger.log("grace_priority", {
+                        "round": round_no + 1,
+                        "player": p.name,
+                        "cost": GRACE_PRIORITY_COST,
+                        "grace_remaining": p.grace_points,
+                    })
+
+    return priority_users
+
+
+def rank_players_for_upgrade(
+    players: List[Player],
+    leader_index: int,
+    grace_priority: Optional[Set[str]] = None,
+) -> List[Player]:
     """
     Rank by:
-      1) tricks won
-      2) permanent witch count
-      3) seat order from leader (earlier is better)
+      1) tricks won (most first)
+      2) grace priority used (spenders first among same trick count)
+      3) grace points (higher is better)
+      4) seat order from leader (fallback)
     """
+    gp = grace_priority or set()
     order = {players[(leader_index + i) % 4].name: i for i in range(4)}
 
     def key(p: Player):
-        return (p.tricks_won_this_round, p.permanent_witch_count(), -order[p.name])
+        return (p.tricks_won_this_round, 1 if p.name in gp else 0, p.grace_points, -order[p.name])
 
     return sorted(players, key=key, reverse=True)
 
 
 # ======= Worker Placement =======
 
-def get_available_actions(player: Player) -> List[str]:
-    """プレイヤーが使用可能なアクションのリストを返す"""
-    available = ACTIONS[:]  # TRADE, HUNT, RECRUIT, PRAY
-    if GRACE_ENABLED:
-        if player.has_donate:
-            available.append("DONATE")
-        if player.has_ritual:
-            available.append("RITUAL")
+def get_available_actions(player: Player, ps: Optional[PlacementState] = None) -> List[str]:
+    """プレイヤーが配置可能なアクションのリストを返す（ナショエコ式ブロッキング対応）"""
+    available: List[str] = []
+
+    if ps is None:
+        # 後方互換: PlacementStateなしの場合は全アクション返す
+        return ACTIONS[:]
+
+    # 共通スポット（ブロッキング: 全体で1ワーカーのみ）
+    if not ps.shared_trade_taken:
+        available.append("TRADE")
+    if not ps.shared_hunt_taken:
+        available.append("HUNT")
+    if GRACE_ENABLED and not ps.shared_pray_taken:
+        available.append("PRAY")
+
+    # Recruit（オープン: 制限なし）
+    total_workers = player.basic_workers_total + player.basic_workers_new_hires
+    if total_workers < MAX_WORKERS and player.gold >= RECRUIT_COST:
+        available.append("RECRUIT")
+
+    # 共有スポット（全プレイヤーのスポットが利用可能、ブロッキングあり）
+    spot_owners = ps.all_players if ps.all_players else [player]
+    for owner in spot_owners:
+        used = ps.personal_spots_used.get(owner.name, set())
+        seen_types: Set[str] = set()
+        for idx, spot in enumerate(owner.personal_spots):
+            if idx in used:
+                continue
+            # Lv2化済みの場合は同種1アクションのみ
+            if spot in owner.leveled_spots:
+                if spot in seen_types:
+                    continue
+                seen_types.add(spot)
+            # コストチェック
+            if spot == "WITCH_NEGOTIATE" and player.grace_points < WITCH_NEGOTIATE_GRACE_COST:
+                continue
+            available.append(f"SPOT:{owner.name}:{idx}:{spot}")
+
     return available
 
 
-def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
-    n = player.basic_workers_total
-    actions: List[str] = []
+def _spot_display_name(action: str, player: Optional[Player] = None,
+                        all_players: Optional[List['Player']] = None) -> str:
+    """アクション名を表示用に変換（共有スポット対応）"""
+    if action.startswith("SPOT:"):
+        parts = action.split(":", 3)
+        owner_name = parts[1]
+        spot_name = parts[3]
+        # 所有者を探してレベル判定
+        owner = None
+        if all_players:
+            owner = next((p for p in all_players if p.name == owner_name), None)
+        if owner and spot_name in owner.leveled_spots:
+            level = 2
+        else:
+            level = 1
+        lv_tag = f" Lv{level}" if level >= 2 else ""
+        bonus = level - 1
+        # 所有者表示（自分のスポットかどうか）
+        owner_tag = ""
+        if player and owner_name != player.name:
+            owner_tag = f"[{owner_name}]"
+        elif player and owner_name == player.name:
+            owner_tag = "[自分]"
+        names = {
+            "UP_TRADE": f"交易{lv_tag}({PERSONAL_TRADE_GOLD + bonus}金){owner_tag}",
+            "UP_HUNT": f"討伐{lv_tag}({PERSONAL_HUNT_VP + bonus}VP){owner_tag}",
+            "UP_PRAY": f"祈り{lv_tag}({PERSONAL_PRAY_GRACE + bonus}恩寵){owner_tag}",
+            "UP_RITUAL": f"儀式{lv_tag}({PERSONAL_RITUAL_GRACE + bonus}恩寵 or {PERSONAL_RITUAL_GOLD + bonus}金){owner_tag}",
+            "WITCH_NEGOTIATE": f"交渉の魔女({WITCH_NEGOTIATE_GRACE_COST}恩寵→{WITCH_NEGOTIATE_GOLD}金){owner_tag}",
+        }
+        return names.get(spot_name, spot_name)
+    names = {
+        "TRADE": f"共通交易({SHARED_TRADE_GOLD}金)",
+        "HUNT": f"共通討伐({SHARED_HUNT_VP}VP)",
+        "PRAY": f"共通祈り({SHARED_PRAY_GRACE}恩寵)",
+        "RECRUIT": f"雇用({RECRUIT_COST}金→+1人)",
+    }
+    return names.get(action, action)
 
-    # 利用可能なアクションを決定
-    available_actions = get_available_actions(player)
+
+def determine_placement_order(
+    players: List[Player],
+    leader_index: int,
+    grace_priority: Optional[Set[str]] = None,
+) -> List[Player]:
+    """ワーカー配置の順序を決定（トリック勝数多い順→恩寵先行権→恩寵多い順→親から時計回り）"""
+    gp = grace_priority or set()
+    seat = {players[(leader_index + i) % len(players)].name: i for i in range(len(players))}
+    return sorted(players, key=lambda p: (-p.tricks_won_this_round, -(1 if p.name in gp else 0), -p.grace_points, seat[p.name]))
+
+
+def resolve_single_action(player: Player, action: str, ps: PlacementState) -> Dict[str, Any]:
+    """1ワーカーのアクションを解決し、PlacementStateを更新する"""
+    result: Dict[str, Any] = {"action": action, "display": _spot_display_name(action, player, ps.all_players), "effects": []}
+
+    if action == "TRADE":
+        player.gold += SHARED_TRADE_GOLD
+        ps.shared_trade_taken = True
+        result["effects"].append(f"+{SHARED_TRADE_GOLD}金")
+    elif action == "HUNT":
+        player.vp += SHARED_HUNT_VP
+        ps.shared_hunt_taken = True
+        result["effects"].append(f"+{SHARED_HUNT_VP}VP")
+    elif action == "PRAY":
+        player.grace_points += SHARED_PRAY_GRACE
+        ps.shared_pray_taken = True
+        result["effects"].append(f"+{SHARED_PRAY_GRACE}恩寵")
+    elif action == "RECRUIT":
+        player.gold -= RECRUIT_COST
+        player.basic_workers_new_hires += 1
+        result["effects"].append(f"-{RECRUIT_COST}金, +1人(次R)")
+    elif action.startswith("SPOT:"):
+        parts = action.split(":", 3)
+        owner_name = parts[1]
+        idx = int(parts[2])
+        spot_name = parts[3]
+
+        # スポット所有者を取得
+        owner = next((p for p in ps.all_players if p.name == owner_name), player)
+        is_owner = (player.name == owner_name)
+
+        # 使用済みマーク（所有者のスポットとして記録）
+        used = ps.personal_spots_used.setdefault(owner_name, set())
+        used.add(idx)
+        # Lv2化済みの場合は同種の全indexを使用済みにする
+        if spot_name in owner.leveled_spots:
+            for i2, s2 in enumerate(owner.personal_spots):
+                if s2 == spot_name:
+                    used.add(i2)
+
+        # 他人のスポット使用時: 所有者に+1金（銀行から）
+        if not is_owner:
+            owner.gold += 1
+            result["effects"].append(f"({owner_name}に+1金収入)")
+
+        # レベル判定: 所有者のleveled_spotsで判定
+        level = 2 if spot_name in owner.leveled_spots else 1
+        # スポットの効果を解決（Lv2は+1ボーナス）
+        if spot_name == "UP_TRADE":
+            gold = PERSONAL_TRADE_GOLD + (level - 1)
+            # 黒路の魔女パッシブ: 使用者本人の魔女で判定
+            if "WITCH_BLACKROAD" in player.witches:
+                gold += 1
+            player.gold += gold
+            witch_note = "(黒路+1)" if "WITCH_BLACKROAD" in player.witches else ""
+            result["effects"].append(f"+{gold}金{witch_note}")
+        elif spot_name == "UP_HUNT":
+            vp = PERSONAL_HUNT_VP + (level - 1)
+            if "WITCH_BLOODHUNT" in player.witches:
+                vp += 1
+            player.vp += vp
+            witch_note = "(血誓+1)" if "WITCH_BLOODHUNT" in player.witches else ""
+            result["effects"].append(f"+{vp}VP{witch_note}")
+        elif spot_name == "UP_PRAY":
+            grace = PERSONAL_PRAY_GRACE + (level - 1)
+            player.grace_points += grace
+            result["effects"].append(f"+{grace}恩寵")
+        elif spot_name == "UP_RITUAL":
+            grace_amount = PERSONAL_RITUAL_GRACE + (level - 1)
+            gold_amount = PERSONAL_RITUAL_GOLD + (level - 1)
+            choice = _choose_ritual_reward(player, grace_amount, gold_amount)
+            if choice == "grace":
+                player.grace_points += grace_amount
+                result["effects"].append(f"+{grace_amount}恩寵")
+            else:
+                player.gold += gold_amount
+                result["effects"].append(f"+{gold_amount}金")
+            # 儀式の祭壇: 使用者のワーカー永久消費
+            player.basic_workers_total -= 1
+            player.ritual_consumed_this_round += 1
+            result["effects"].append("ワーカー-1(永久消費)")
+        elif spot_name == "WITCH_NEGOTIATE":
+            player.grace_points -= WITCH_NEGOTIATE_GRACE_COST
+            player.gold += WITCH_NEGOTIATE_GOLD
+            result["effects"].append(f"-{WITCH_NEGOTIATE_GRACE_COST}恩寵, +{WITCH_NEGOTIATE_GOLD}金(交渉の魔女)")
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
+    return result
+
+
+def bot_choose_single_action(player: Player, available: List[str],
+                              ps: PlacementState, round_no: int) -> str:
+    """Bot AIが1ワーカーの配置先を選択する"""
+    if not available:
+        return "PASS"
+
+    if player.ai_bot:
+        from ai_bot import ai_choose_worker_action
+        result = ai_choose_worker_action(player, available, round_no, ps.all_players if ps.all_players else None)
+        if result is not None:
+            return result
+
+    strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
+    expected_wage = calc_expected_wage(player, round_no)
+    gold_deficit = max(0, expected_wage - player.gold)
+    grace_awareness = strat.get('grace_awareness', 0.5)
+
+    # スコアリング: 各アクションに優先度をつける
+    scores: List[Tuple[float, str]] = []
+    for action in available:
+        score = 50.0
+
+        if action == "TRADE" or (action.startswith("SPOT:") and "UP_TRADE" in action):
+            score += 20  # Tradeは常に有用
+            if gold_deficit > 0:
+                score += 35  # 給料支払いに金が必要
+            if strat.get('prefer_gold', False):
+                score += 15
+            # 共通スポットはブロック前に確保（個人よりやや優先）
+            if action == "TRADE":
+                score += 5
+        elif action == "HUNT" or (action.startswith("SPOT:") and "UP_HUNT" in action):
+            score += 15  # Huntも常に有用
+            score += strat['hunt_ratio'] * 40
+            if action == "HUNT":
+                score += 5
+        elif action == "PRAY" or (action.startswith("SPOT:") and "UP_PRAY" in action):
+            score += grace_awareness * 25
+            if action == "PRAY":
+                score += 5
+        elif action.startswith("SPOT:") and "WITCH_NEGOTIATE" in action:
+            if gold_deficit > 0:
+                score += 35  # 恩寵→金変換は金不足時に有用
+            else:
+                score += 10
+        elif action.startswith("SPOT:") and "UP_RITUAL" in action:
+            # 儀式はワーカー永久消費: ワーカー2以下なら避ける
+            if player.basic_workers_total <= 2:
+                score -= 30
+            else:
+                score += 25  # 恩寵 or 金の選択は常に有用
+                if gold_deficit > 0:
+                    score += 15  # 金選択が可能
+        elif action == "RECRUIT":
+            # 金に余裕があり、共有スポットが少ない序盤のみ雇用検討
+            total_shared = sum(len(p.personal_spots) for p in ps.all_players) if ps.all_players else len(player.personal_spots)
+            total_spots = total_shared + 3  # 共有スポット + 共通3つ
+            if (round_no < 3 and player.basic_workers_total < strat.get('max_workers', 4)
+                    and player.basic_workers_total < total_spots
+                    and player.gold >= RECRUIT_COST + calc_expected_wage(player, round_no)):
+                score += 15
+            else:
+                score += 2
+
+        # ランダム性を加える
+        score += player.rng.random() * 10
+
+        scores.append((score, action))
+
+    scores.sort(key=lambda x: -x[0])
+    return scores[0][1]
+
+
+def choose_single_action(player: Player, ps: PlacementState, round_no: int) -> str:
+    """1ワーカーの配置先を選択（Bot/人間共通エントリポイント）"""
+    available = get_available_actions(player, ps)
+
+    if not available:
+        return "PASS"
 
     if player.is_bot:
-        strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
-        expected_wage = calc_expected_wage(player, round_no)
-        gold_needed = expected_wage - player.gold
-        current_gold = player.gold  # Track gold for DONATE decisions
-        grace_awareness = strat.get('grace_awareness', 0.5)
+        return bot_choose_single_action(player, available, ps, round_no)
 
-        # 恩寵閾値への近さをチェック
-        grace_near_threshold = False
-        if GRACE_ENABLED:
-            for threshold, _ in GRACE_THRESHOLD_BONUS:
-                diff = threshold - player.grace_points
-                if 0 < diff <= 6:  # 閾値まであと6点以内（強化: 4→6）
-                    grace_near_threshold = True
-                    break
+    # 人間プレイヤー
+    remaining = ps.workers_remaining.get(player.name, 0)
+    print(f"\n{player.name} ワーカーを1人配置 (残り: {remaining})")
+    print("利用可能なアクション:")
+    for i, a in enumerate(available):
+        print(f"  [{i}] {_spot_display_name(a, player, ps.all_players)}")
+    while True:
+        s = input("番号を選択: ").strip()
+        try:
+            idx = int(s)
+            if 0 <= idx < len(available):
+                return available[idx]
+        except ValueError:
+            # アクション名直接入力も受け付ける
+            s_upper = s.upper()
+            for a in available:
+                if a == s_upper or a.startswith(f"SPOT:") and s_upper in a.upper():
+                    return a
+        print(f"無効な入力です: {s}")
 
-        for _ in range(n):
-            # 恩寵特化: 祈り、儀式、寄付を積極的に選択
-            if GRACE_ENABLED and strat.get('prefer_grace', False):
-                # 儀式が使えれば儀式（追加の恩寵スロット）
-                if player.has_ritual and player.rng.random() < 0.5:
-                    actions.append("RITUAL")
-                    continue
-                # 寄付が使えて金貨に余裕があれば寄付
-                if (player.has_donate and
-                    current_gold >= GRACE_DONATE_COST + max(0, expected_wage - 2)):
-                    actions.append("DONATE")
-                    current_gold -= GRACE_DONATE_COST
-                    continue
-                # 祈り
-                if player.rng.random() < 0.6:
-                    actions.append("PRAY")
-                    continue
 
-            # 全性格共通: 閾値に近い場合、恩寵アクションを選択
-            if GRACE_ENABLED and grace_near_threshold:
-                # 儀式が使えれば選択（強化: 0.5→0.7）
-                if player.has_ritual and player.rng.random() < grace_awareness * 0.7:
-                    actions.append("RITUAL")
-                    continue
-                # 寄付が使えて金貨があれば選択（強化: 0.4→0.6）
-                if (player.has_donate and
-                    current_gold >= GRACE_DONATE_COST + expected_wage and
-                    player.rng.random() < grace_awareness * 0.6):
-                    actions.append("DONATE")
-                    current_gold -= GRACE_DONATE_COST
-                    continue
-                # 祈りを選択（強化: 0.3→0.5）
-                if player.rng.random() < grace_awareness * 0.5:
-                    actions.append("PRAY")
-                    continue
+def run_worker_placement_round(
+    players: List[Player],
+    round_no: int,
+    leader_index: int,
+    is_interactive: bool = False,
+    logger: Optional[JsonlLogger] = None,
+    grace_priority: Optional[Set[str]] = None,
+) -> PlacementState:
+    """ナショナルエコノミー式ワーカー配置のメインループ（CLI/Simulation共用）"""
+    ps = PlacementState()
+    ps.all_players = players
+    order = determine_placement_order(players, leader_index, grace_priority)
+    ps.placement_order = order
 
-            # 通常の恩寵アクション選択（強化: 0.2→0.4）
-            if GRACE_ENABLED and player.rng.random() < grace_awareness * 0.4:
-                if player.has_ritual and player.rng.random() < 0.5:
-                    actions.append("RITUAL")
-                    continue
-                if player.rng.random() < 0.4:  # 強化: 0.3→0.4
-                    actions.append("PRAY")
-                    continue
+    for p in players:
+        ps.workers_remaining[p.name] = p.basic_workers_total
+        ps.personal_spots_used[p.name] = set()
 
-            if player.strategy == 'CONSERVATIVE':
-                # 堅実: 常にTRADE
-                actions.append("TRADE")
-            elif player.strategy == 'VP_AGGRESSIVE':
-                # VPつっぱ: 高確率でHUNT
-                if player.rng.random() < strat['hunt_ratio']:
-                    actions.append("HUNT")
-                else:
-                    actions.append("TRADE")
-            elif player.strategy == 'DEBT_AVOID':
-                # 借金回避: まず給料分を確保、余剰でHUNT
-                if gold_needed > 0:
-                    actions.append("TRADE")
-                    gold_needed -= player.trade_yield()
-                else:
-                    if player.rng.random() < strat['hunt_ratio']:
-                        actions.append("HUNT")
-                    else:
-                        actions.append("TRADE")
-            elif player.strategy == 'GRACE_FOCUSED':
-                # 恩寵特化: 祈り優先、それ以外はTRADE
-                if player.rng.random() < 0.4:
-                    actions.append("PRAY")
-                else:
-                    actions.append("TRADE")
-            else:  # BALANCED
-                # バランス: 確率でHUNT/TRADE
-                if player.rng.random() < strat['hunt_ratio']:
-                    actions.append("HUNT")
-                else:
-                    actions.append("TRADE")
-        return actions
+    if is_interactive:
+        print("\n--- ワーカー配置 (ナショナルエコノミー方式) ---")
+        print(f"配置順: {' → '.join(p.name for p in order)}")
 
-    print(f"\n{player.name} {n}人の見習いにアクションを割り当てます。")
-    if GRACE_ENABLED:
-        print(f"  祈り: 1ワーカー → {player.pray_yield()}恩寵 [Lv{player.pray_level}]")
-        if player.has_donate:
-            print(f"  寄付: 1ワーカー + {GRACE_DONATE_COST}金 → {GRACE_DONATE_GAIN}恩寵")
-        if player.has_ritual:
-            print(f"  儀式: 1ワーカー → {GRACE_RITUAL_GAIN}恩寵")
-    for i in range(n):
-        a = prompt_choice(f" ワーカー{i+1}のアクション", available_actions, default="TRADE")
-        actions.append(a)
+    # ラウンドロビンで1ワーカーずつ配置
+    while any(ps.workers_remaining[p.name] > 0 for p in order):
+        for p in order:
+            if ps.workers_remaining[p.name] <= 0:
+                continue
+            action = choose_single_action(p, ps, round_no)
+            if action == "PASS":
+                ps.workers_remaining[p.name] = 0
+                if is_interactive:
+                    print(f"  {p.name}: PASS（配置先なし）")
+                continue
+            result = resolve_single_action(p, action, ps)
+            ps.workers_remaining[p.name] -= 1
+            if is_interactive:
+                effects_str = ", ".join(result["effects"])
+                print(f"  {p.name}: {result['display']} → {effects_str}")
+            if logger:
+                logger.log("worker_placement", {
+                    "player": p.name,
+                    "action": action,
+                    "display": result["display"],
+                    "effects": result["effects"],
+                    "round": round_no + 1,
+                })
+
+    return ps
+
+
+# === 後方互換ラッパー ===
+
+def choose_actions_for_player(player: Player, round_no: int = 0) -> List[str]:
+    """後方互換: 旧APIを新方式で実装（GameEngine用）"""
+    ps = PlacementState()
+    ps.workers_remaining[player.name] = player.basic_workers_total
+    ps.personal_spots_used[player.name] = set()
+    actions = []
+    for _ in range(player.basic_workers_total):
+        action = choose_single_action(player, ps, round_no)
+        if action == "PASS":
+            break
+        resolve_single_action(player, action, ps)
+        actions.append(action)
     return actions
 
 
 def resolve_actions(player: Player, actions: List[str]) -> Dict[str, Any]:
-    before = {"gold": player.gold, "vp": player.vp, "new_hires": player.basic_workers_new_hires,
-              "grace_points": player.grace_points}
-    witch_bonuses: List[str] = []
-    grace_bonuses: List[str] = []
-
-    for a in actions:
-        if a == "TRADE":
-            player.gold += player.trade_yield()
-            # WITCH_BLACKROAD: TRADEで+2金
-            if "WITCH_BLACKROAD" in player.witches:
-                player.gold += 2
-                witch_bonuses.append("黒路の魔女: +2金")
-        elif a == "HUNT":
-            player.vp += player.hunt_yield()
-            # WITCH_BLOODHUNT: HUNTで+1VP
-            if "WITCH_BLOODHUNT" in player.witches:
-                player.vp += 1
-                witch_bonuses.append("血誓の討伐官: +1VP")
-        elif a == "RECRUIT":
-            player.basic_workers_new_hires += 1
-        elif a == "PRAY":
-            # 祈りアクション: ワーカー配置で恩寵獲得
-            if GRACE_ENABLED:
-                pray_gain = player.pray_yield()
-                player.grace_points += pray_gain
-                grace_bonuses.append(f"祈り(Lv{player.pray_level}): +{pray_gain}恩寵")
-        elif a == "DONATE":
-            # 寄付アクション: 金貨を恩寵に変換（アップグレードで解放）
-            if GRACE_ENABLED and player.has_donate:
-                if player.gold >= GRACE_DONATE_COST:
-                    player.gold -= GRACE_DONATE_COST
-                    player.grace_points += GRACE_DONATE_GAIN
-                    grace_bonuses.append(f"寄付: -{GRACE_DONATE_COST}金 → +{GRACE_DONATE_GAIN}恩寵")
-        elif a == "RITUAL":
-            # 儀式アクション: ワーカーで恩寵獲得（アップグレードで解放）
-            if GRACE_ENABLED and player.has_ritual:
-                player.grace_points += GRACE_RITUAL_GAIN
-                grace_bonuses.append(f"儀式: +{GRACE_RITUAL_GAIN}恩寵")
-        else:
-            raise ValueError(f"Unknown action: {a}")
-
-    after = {"gold": player.gold, "vp": player.vp, "new_hires": player.basic_workers_new_hires,
-             "grace_points": player.grace_points}
-    return {"before": before, "after": after, "witch_bonuses": witch_bonuses, "grace_bonuses": grace_bonuses}
+    """後方互換: 旧resolve_actions API（結果は既にchoose_actions_for_playerで適用済み）"""
+    return {"before": {}, "after": {}, "witch_bonuses": [], "grace_bonuses": []}
 
 
 def pay_wages_and_debt(
@@ -1614,22 +1982,21 @@ def pay_wages_and_debt(
     workers_active = player.basic_workers_total
     workers_hired_this_round = player.basic_workers_new_hires
 
-    # 給料計算: 初期ワーカーのみ（アップグレードワーカーは給料なし）
+    # 給料計算: 初期ワーカーのみ（儀式消費ワーカーも給料対象）
     initial_wage_rate = WAGE_CURVE[round_no]
     initial_workers_base = initial_workers_config if initial_workers_config is not None else INITIAL_WORKERS
-    # 初期ワーカー数 = 基本数（2）まで、ただしアップグレードワーカーを除外
-    initial_workers_count = min(initial_workers_base, workers_active - player.upgraded_workers)
+    # 儀式で消費されたワーカーも給料計算に含める（消費前のワーカー数で計算）
+    workers_for_wage = workers_active + player.ritual_consumed_this_round
+    initial_workers_count = min(initial_workers_base, workers_for_wage)
     initial_workers_count = max(0, initial_workers_count)
 
     wage_gross = initial_workers_count * initial_wage_rate
 
     discount = 0
     witch_wage_bonus = ""
-    if player.recruit_upgrade == "RECRUIT_WAGE_DISCOUNT":
-        discount = workers_hired_this_round
 
-    # WITCH_HERD: 見習いを雇用したラウンド、給料合計-1
-    if "WITCH_HERD" in player.witches and workers_hired_this_round > 0:
+    # WITCH_HERD: 毎ラウンド給料-1（パッシブ効果）
+    if "WITCH_HERD" in player.witches:
         discount += 1
         witch_wage_bonus = "群導の魔女: 給料-1"
 
@@ -1658,21 +2025,16 @@ def pay_wages_and_debt(
     paid = min(player.gold, wage_net)
     short = max(0, wage_net - player.gold)
 
-    debt_penalty = 0
     if player.gold >= wage_net:
         player.gold -= wage_net
     else:
         player.gold = 0
-        # Use config overrides if provided, otherwise use global
-        actual_multiplier = debt_multiplier if debt_multiplier is not None else DEBT_PENALTY_MULTIPLIER
-        actual_cap = debt_cap if debt_cap is not None else DEBT_PENALTY_CAP
-        debt_penalty = calculate_debt_penalty_configurable(short, actual_multiplier, actual_cap)
-        player.vp -= debt_penalty
+        # 負債を累積（ゲーム終了時にまとめてペナルティ適用）
+        player.accumulated_debt += short
 
     return {
         "initial_wage_rate": initial_wage_rate,
         "initial_workers": initial_workers_count,
-        "upgraded_workers": player.upgraded_workers,
         "workers_active": workers_active,
         "workers_hired_this_round": workers_hired_this_round,
         "wage_gross": wage_gross,
@@ -1680,7 +2042,7 @@ def pay_wages_and_debt(
         "wage_net": wage_net,
         "paid_gold": paid,
         "short_gold": short,
-        "debt_penalty": debt_penalty,
+        "accumulated_debt": player.accumulated_debt,
         "grace_debt_reduction": grace_debt_reduction,  # 恩寵による負債軽減金額
         "gold_before": before_gold,
         "gold_after": player.gold,
@@ -1723,7 +2085,6 @@ def main():
             "REVEAL_UPGRADES": REVEAL_UPGRADES,
             "START_GOLD": START_GOLD,
             "WAGE_CURVE": WAGE_CURVE,
-            "UPGRADE_WORKER_COST": UPGRADE_WORKER_COST,
             "DEBT_PENALTY_MULTIPLIER": DEBT_PENALTY_MULTIPLIER,
             "DEBT_PENALTY_CAP": DEBT_PENALTY_CAP,
             "RESCUE_GOLD_FOR_4TH": RESCUE_GOLD_FOR_4TH,
@@ -1778,18 +2139,24 @@ def main():
 
         leader_index = run_trick_taking(players, round_no, rng, logger, remaining_deck)
 
-        ranked = rank_players_for_upgrade(players, leader_index)
+        # 恩寵先行権: 同トリック数の場合に先行できる
+        grace_priority: Set[str] = set()
+        if GRACE_ENABLED:
+            grace_priority = _offer_grace_priority(players, leader_index, logger, round_no)
+
+        ranked = rank_players_for_upgrade(players, leader_index, grace_priority)
         logger.log("upgrade_pick_order", {
             "round": round_no + 1,
             "order": [p.name for p in ranked],
             "tricks_won": {p.name: p.tricks_won_this_round for p in players},
             "witches": {p.name: p.permanent_witch_count() for p in players},
             "declared": {p.name: p.declared_tricks for p in players},
+            "grace_priority": list(grace_priority),
         })
 
         print("\nアップグレード選択順:")
         for i, p in enumerate(ranked, start=1):
-            print(f" {i}. {p.name} トリック={p.tricks_won_this_round} 魔女={p.permanent_witch_count()} 宣言={p.declared_tricks}")
+            print(f" {i}. {p.name} トリック={p.tricks_won_this_round} 恩寵={p.grace_points} 宣言={p.declared_tricks}")
 
         for p in ranked:
             before = snapshot_players([p])[0]
@@ -1809,13 +2176,23 @@ def main():
                 })
             else:
                 revealed.remove(choice)
-                apply_upgrade(p, choice)
-                print(f"{p.name} がアップグレード獲得: {upgrade_name(choice)}")
+                # 2枚目の場合はLv2か別枠かを選択
+                level_up = None
+                if choice in ("UP_TRADE", "UP_HUNT", "UP_PRAY", "UP_RITUAL") and p.personal_spots.count(choice) >= 1:
+                    level_up = choose_level_up_or_separate(p, choice)
+                apply_upgrade(p, choice, level_up)
+                lv_info = ""
+                if level_up is True:
+                    lv_info = " → Lv2に強化"
+                elif level_up is False:
+                    lv_info = " → 別枠Lv1配置"
+                print(f"{p.name} がアップグレード獲得: {upgrade_name(choice)}{lv_info}")
                 logger.log("upgrade_pick", {
                     "round": round_no + 1,
                     "player": p.name,
                     "choice": choice,
                     "choice_name": upgrade_name(choice),
+                    "level_up": level_up,
                     "revealed_remaining": revealed[:],
                     "before": before,
                     "after": snapshot_players([p])[0],
@@ -1849,28 +2226,24 @@ def main():
             "grace_after": fourth.grace_points,
         })
 
-        print("\n--- ワーカー配置 ---")
         logger.log("wp_start", {"round": round_no + 1, "players": snapshot_players(players)})
+        run_worker_placement_round(players, round_no, leader_index, is_interactive=True, logger=logger, grace_priority=grace_priority)
         for p in players:
-            actions = choose_actions_for_player(p, round_no)
-            delta = resolve_actions(p, actions)
-            print(f"{p.name} actions={actions} => Gold={p.gold}, VP={p.vp}, NewHires={p.basic_workers_new_hires}")
-            logger.log("wp_actions", {
+            print(f"{p.name} => Gold={p.gold}, VP={p.vp}, NewHires={p.basic_workers_new_hires}")
+            logger.log("wp_result", {
                 "round": round_no + 1,
                 "player": p.name,
-                "actions": actions,
-                "delta": delta,
                 "state": snapshot_players([p])[0],
             })
 
         initial_rate = WAGE_CURVE[round_no]
-        cap_info = f"上限{DEBT_PENALTY_CAP}" if DEBT_PENALTY_CAP else "無制限"
-        print(f"\n--- 給料支払い (初期ワーカー={initial_rate}金/人) と負債 (-{DEBT_PENALTY_MULTIPLIER}VP/金, {cap_info}) ---")
+        print(f"\n--- 給料支払い (初期ワーカー={initial_rate}金/人) ---")
         logger.log("wage_phase_start", {"round": round_no + 1, "initial_wage_rate": initial_rate, "players": snapshot_players(players)})
 
         for p in players:
             res = pay_wages_and_debt(p, round_no)
-            print(f"{p.name}: Gold {res['gold_before']}->{res['gold_after']}, VP {res['vp_before']}->{res['vp_after']}")
+            debt_info = f" 累積負債={p.accumulated_debt}" if p.accumulated_debt > 0 else ""
+            print(f"{p.name}: Gold {res['gold_before']}->{res['gold_after']}{debt_info}")
             logger.log("wage_result", {
                 "round": round_no + 1,
                 "player": p.name,
@@ -1906,51 +2279,64 @@ def main():
 
         logger.log("round_end", {"round": round_no + 1, "players": snapshot_players(players)})
 
-    # WITCH_TREASURE: 金貨→恩寵変換（閾値ボーナス計算前に実行）
-    if GRACE_ENABLED:
-        print("\n--- 金貨→恩寵変換（魔女効果）---")
+
+
+    # ゲーム終了時: 金貨→恩寵変換（恩寵→VP変換の前に適用）
+    if GRACE_ENABLED and GOLD_TO_GRACE_RATE > 0:
+        print("\n--- 金貨→恩寵変換 ---")
         for p in players:
-            if "WITCH_TREASURE" in p.witches and p.gold > 0:
-                grace_gained = p.gold
+            grace_gained = p.gold // GOLD_TO_GRACE_RATE
+            if grace_gained > 0:
+                gold_spent = grace_gained * GOLD_TO_GRACE_RATE
+                p.gold -= gold_spent
                 p.grace_points += grace_gained
-                print(f"{p.name}: {p.gold}G → +{grace_gained}恩寵 (《財宝変換の魔女》)")
-                logger.log("witch_treasure_convert", {
-                    "player": p.name,
-                    "gold": p.gold,
-                    "grace_gained": grace_gained,
-                })
+                print(f"{p.name}: {gold_spent}G → +{grace_gained}恩寵 (残{p.gold}G)")
+            else:
+                print(f"{p.name}: {p.gold}G ({GOLD_TO_GRACE_RATE}G未満)")
+            logger.log("gold_to_grace", {
+                "player": p.name,
+                "gold_spent": grace_gained * GOLD_TO_GRACE_RATE if grace_gained > 0 else 0,
+                "grace_gained": grace_gained,
+            })
 
     # 恩寵ポイント閾値ボーナス（ゲーム終了時）
     if GRACE_ENABLED:
-        print("\n--- 恩寵ポイント閾値ボーナス ---")
+        print("\n--- 恩寵→VP変換 ---")
         for p in players:
-            # 最高の閾値のみ適用（累計ではない）
-            threshold_bonus = 0
-            threshold_reached = 0
-            for threshold, bonus in GRACE_THRESHOLD_BONUS:
-                if p.grace_points >= threshold:
-                    threshold_bonus = bonus
-                    threshold_reached = threshold
-                    break
-            if threshold_bonus > 0:
-                p.vp += threshold_bonus
-                print(f"{p.name}: 恩寵{p.grace_points}点 ({threshold_reached}+到達) → +{threshold_bonus}VP")
+            grace_bonus = (p.grace_points // GRACE_VP_PER_N) * GRACE_VP_AMOUNT
+            if grace_bonus > 0:
+                p.vp += grace_bonus
+                print(f"{p.name}: 恩寵{p.grace_points}点 ({p.grace_points // GRACE_VP_PER_N}×{GRACE_VP_AMOUNT}) → +{grace_bonus}VP")
             else:
-                print(f"{p.name}: 恩寵{p.grace_points}点 (閾値未到達)")
-            logger.log("grace_threshold_bonus", {
+                print(f"{p.name}: 恩寵{p.grace_points}点 ({GRACE_VP_PER_N}未満)")
+            logger.log("grace_bonus", {
                 "player": p.name,
                 "grace_points": p.grace_points,
-                "threshold_reached": threshold_reached,
-                "bonus_vp": threshold_bonus,
+                "bonus_vp": grace_bonus,
             })
 
-    # ゲーム終了時: 金貨をVPに変換
+    # ゲーム終了時: 金貨をVPに変換（恩寵変換後の残り金貨）
     print("\n--- 金貨→VP変換 ---")
     for p in players:
         bonus_vp = p.gold // GOLD_TO_VP_RATE
         if bonus_vp > 0:
             print(f"{p.name}: {p.gold}G → +{bonus_vp}VP")
             p.vp += bonus_vp
+
+    # ゲーム終了時: 負債ペナルティ適用
+    print("\n--- 負債ペナルティ ---")
+    for p in players:
+        if p.accumulated_debt > 0:
+            penalty = calculate_debt_penalty(p.accumulated_debt)
+            p.vp -= penalty
+            print(f"{p.name}: 累積負債{p.accumulated_debt}金 → -{penalty}VP")
+            logger.log("debt_penalty", {
+                "player": p.name,
+                "accumulated_debt": p.accumulated_debt,
+                "penalty_vp": penalty,
+            })
+        else:
+            print(f"{p.name}: 負債なし")
 
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
     logger.log("game_end", {
@@ -1962,9 +2348,10 @@ def main():
     print("\n=== ゲーム終了 ===")
     for i, p in enumerate(players_sorted, start=1):
         grace_info = f" 恩寵={p.grace_points}" if GRACE_ENABLED else ""
+        debt_info = f" 負債={p.accumulated_debt}" if p.accumulated_debt > 0 else ""
         print(f"{i}. {p.name} VP={p.vp} 金貨={p.gold} ワーカー={p.basic_workers_total} "
-              f"交易={p.trade_yield()}(Lv{p.trade_level}) 討伐={p.hunt_yield()}(Lv{p.hunt_level}) "
-              f"魔女={p.permanent_witch_count()}{grace_info}")
+              f"スポット={len(p.personal_spots)} "
+              f"魔女={p.permanent_witch_count()}{grace_info}{debt_info}")
     print(f"\n勝者: {players_sorted[0].name}")
     print(f"\nLog written to: {LOG_PATH}")
 
@@ -1974,7 +2361,7 @@ def main():
 @dataclass
 class InputRequest:
     """Represents a request for human input."""
-    type: str  # "declaration", "grace_hand_swap", "seal", "choose_card", "upgrade", "fourth_place_bonus", "worker_actions"
+    type: str  # "declaration", "grace_hand_swap", "seal", "choose_card", "upgrade", "fourth_place_bonus", "grace_priority", "worker_actions"
     player: Player
     context: Dict[str, Any]
 
@@ -1982,19 +2369,27 @@ class InputRequest:
 class GameEngine:
     """State-machine based game engine for GUI integration."""
 
-    def __init__(self, seed: int = 42, config: Optional[GameConfig] = None, all_bots: bool = False):
+    def __init__(self, seed: int = 42, config: Optional[GameConfig] = None, all_bots: bool = False, human_slots: Optional[List[int]] = None):
         self.rng = random.Random(seed)
         self.deal_seed = seed
         self.config = config if config is not None else GameConfig()
 
+        # Determine which slots are human
+        if human_slots is not None:
+            human_set = set(human_slots)
+        elif all_bots:
+            human_set = set()
+        else:
+            human_set = {0}  # Default: P1 is human
+
         # CPUにランダムな性格を割り当て
         bot_rng = random.Random()
-        self.players = [
-            Player("P1", is_bot=all_bots, rng=random.Random(1), strategy=assign_random_strategy(bot_rng) if all_bots else None),
-            Player("P2", is_bot=True, rng=random.Random(2), strategy=assign_random_strategy(bot_rng)),
-            Player("P3", is_bot=True, rng=random.Random(3), strategy=assign_random_strategy(bot_rng)),
-            Player("P4", is_bot=True, rng=random.Random(4), strategy=assign_random_strategy(bot_rng)),
-        ]
+        self.players = []
+        for i in range(4):
+            is_bot = i not in human_set
+            name = f"P{i+1}"
+            strategy = assign_random_strategy(bot_rng) if is_bot else None
+            self.players.append(Player(name, is_bot=is_bot, rng=random.Random(i+1), strategy=strategy))
 
         # 設定値でプレイヤーの初期状態を上書き
         for p in self.players:
@@ -2026,10 +2421,15 @@ class GameEngine:
         self.lead_card: Optional[Card] = None
         self.trick_leader = 0
         self.trick_player_offset = 0
+        self.trick_play_just_happened = False  # Animation flag: True after any card play in a trick
 
-        # Worker placement state
+        # Worker placement state (ナショエコ式)
         self.wp_player_index = 0
         self.wp_actions: List[str] = []
+        self.wp_placement_state: Optional[PlacementState] = None
+        self.wp_order: List[Player] = []
+        self.wp_order_idx = 0  # round-robin index within order
+        self.wp_grace_priority: Set[str] = set()
 
         # Trick history for display (current round)
         self.trick_history: List[Dict[str, Any]] = []
@@ -2042,10 +2442,28 @@ class GameEngine:
     def _log(self, msg: str):
         self.log_messages.append(msg)
 
+    def _build_shared_board(self) -> List[Dict[str, Any]]:
+        """共有ボードの状態を返す"""
+        board = []
+        for p in self.players:
+            seen_leveled: Set[str] = set()
+            for idx, spot in enumerate(p.personal_spots):
+                if spot in p.leveled_spots:
+                    if spot in seen_leveled:
+                        continue
+                    seen_leveled.add(spot)
+                    board.append({"owner": p.name, "type": spot, "level": 2})
+                else:
+                    board.append({"owner": p.name, "type": spot, "level": 1})
+        return board
+
     def get_state(self) -> Dict[str, Any]:
         """Return current game state for display."""
-        # 現在のトリックが空なら直前のトリックを表示用に返す
-        display_plays = self.trick_plays if self.trick_plays else self.last_trick_plays
+        # 現在のトリックのプレイのみ表示（完了トリックはクライアント側ポップアップで表示）
+        if self.phase == "trick":
+            display_plays = self.trick_plays
+        else:
+            display_plays = []
         return {
             "round_no": self.round_no,
             "rounds": self.config.rounds,
@@ -2056,9 +2474,12 @@ class GameEngine:
             "trick_history": self.trick_history[:],
             "current_trick": self.current_trick,
             "current_trick_plays": [(p.name, c) for p, c in display_plays],
+            "trick_play_just_happened": self.trick_play_just_happened,
+            "trick_leader": self.trick_leader,
             "sealed_by_player": {name: [str(c) for c in cards] for name, cards in self.sealed_by_player.items()},
             "log": self.log_messages[-20:],  # Last 20 messages
             "game_over": self.phase == "game_end",
+            "shared_board": self._build_shared_board(),
         }
 
     def get_pending_input(self) -> Optional[InputRequest]:
@@ -2084,7 +2505,7 @@ class GameEngine:
                 self.full_hands[player.name].remove(c)
             self.sealed_by_player[player.name] = response
             self.playable_hands[player.name] = self.full_hands[player.name][:]
-            self._log(f"{player.name} 封印: {', '.join(str(c) for c in response)}")
+            self._log(f"{player.name} 公開封印: {', '.join(str(c) for c in response)}")
             self._pending_input = None
 
         elif req_type == "choose_card":
@@ -2094,6 +2515,7 @@ class GameEngine:
             if self.lead_card is None:
                 self.lead_card = response
             self._pending_input = None
+            self.trick_play_just_happened = True
 
         elif req_type == "upgrade":
             # response is upgrade string or "GOLD"
@@ -2101,10 +2523,30 @@ class GameEngine:
                 gold_amount = self.config.take_gold_instead
                 player.gold += gold_amount
                 self._log(f"{player.name} が {gold_amount} 金貨を獲得")
+                self._pending_input = None
             else:
-                self.revealed_upgrades.remove(response)
-                apply_upgrade(player, response)
-                self._log(f"{player.name} 獲得: {upgrade_name(response)}")
+                # 2枚目の場合はLv2か別枠かを選択させる
+                is_second = response in ("UP_TRADE", "UP_HUNT", "UP_PRAY", "UP_RITUAL") and player.personal_spots.count(response) >= 1
+                if is_second:
+                    self.revealed_upgrades.remove(response)
+                    # 次のinputでlevel_up選択を求める
+                    self._pending_input = InputRequest(
+                        type="upgrade_level_choice",
+                        player=player,
+                        context={"upgrade": response},
+                    )
+                else:
+                    self.revealed_upgrades.remove(response)
+                    apply_upgrade(player, response)
+                    self._log(f"{player.name} 獲得: {upgrade_name(response)}")
+                    self._pending_input = None
+
+        elif req_type == "upgrade_level_choice":
+            # response is True (Lv2) or False (別枠)
+            upgrade = self._pending_input.context["upgrade"]
+            apply_upgrade(player, upgrade, response)
+            lv_info = " → Lv2" if response else " → 別枠"
+            self._log(f"{player.name} 獲得: {upgrade_name(upgrade)}{lv_info}")
             self._pending_input = None
 
         elif req_type == "fourth_place_bonus":
@@ -2118,34 +2560,41 @@ class GameEngine:
             self._pending_input = None
             # Move to worker_placement phase
             self.phase = "worker_placement"
-            self.wp_player_index = 0
+            self.wp_placement_state = None  # fresh init in step()
 
         elif req_type == "grace_hand_swap":
-            # response is Card to swap out, or None to skip
-            if response is not None:
+            # response is True for full swap, or None/False to skip
+            if response:
                 hand = self.full_hands[player.name]
+                old_hand = hand[:]
                 player.grace_points -= GRACE_HAND_SWAP_COST
-                hand.remove(response)
-                new_card = self.remaining_deck.pop(0)
-                hand.append(new_card)
-                self.remaining_deck.append(response)
+                self.remaining_deck.extend(hand)
+                hand.clear()
                 self.rng.shuffle(self.remaining_deck)
-                self._log(f"{player.name} 手札交換: {response} → {new_card}")
+                for _ in range(len(old_hand)):
+                    hand.append(self.remaining_deck.pop(0))
+                self._log(f"{player.name} 手札全交換: {' '.join(str(c) for c in old_hand)} → {' '.join(str(c) for c in hand)}")
             self._pending_input = None
 
         elif req_type == "worker_actions":
-            # response can be list of actions or dict with additional options
-            if isinstance(response, dict):
-                actions = response.get("actions", [])
-                delta = resolve_actions(player, actions)
-                self._log(f"{player.name} アクション: {actions}")
-            else:
-                # Backward compatibility: response is just a list
-                actions = response
-                delta = resolve_actions(player, actions)
-                self._log(f"{player.name} アクション: {actions}")
+            # ナショエコ式: response is a single action string
+            action = response
+            ps = self.wp_placement_state
+            if ps is not None:
+                result = resolve_single_action(player, action, ps)
+                ps.workers_remaining[player.name] -= 1
+                effects_str = ", ".join(result["effects"])
+                self._log(f"{player.name}: {result['display']} → {effects_str}")
+                self.wp_order_idx += 1
+            self._pending_input = None
 
-            self.wp_actions = actions
+        elif req_type == "grace_priority":
+            # response: True/False (use grace priority or not)
+            if response:
+                player.grace_points -= GRACE_PRIORITY_COST
+                self.wp_grace_priority.add(player.name)
+                self._log(f"{player.name} が先行権を獲得 (恩寵 -{GRACE_PRIORITY_COST})")
+            self._grace_priority_idx += 1
             self._pending_input = None
 
     def step(self) -> bool:
@@ -2174,6 +2623,9 @@ class GameEngine:
 
             for p in self.players:
                 p.tricks_won_this_round = 0
+                p.declared_tricks = None
+                p.ritual_consumed_this_round = 0
+            self.last_trick_plays = []
 
             # ラウンドごとにカードを配る（デッキをリシャッフル）
             round_hands, self.remaining_deck = deal_round_cards(
@@ -2224,20 +2676,20 @@ class GameEngine:
             hand = self.full_hands[player.name]
 
             if player.is_bot:
-                # ボットの手札交換ロジック（grace_hand_swap関数と同等）
-                if player.grace_points >= GRACE_HAND_SWAP_COST:
+                # ボットの手札全交換ロジック（grace_hand_swap関数と同等）
+                if player.grace_points >= GRACE_HAND_SWAP_COST and len(self.remaining_deck) >= len(hand):
                     non_trump = [c for c in hand if not c.is_trump()]
                     if non_trump:
-                        worst_card = min(non_trump, key=lambda c: c.rank)
-                        # ランクが5以下で、恩寵が2以上ある場合のみ交換
-                        if worst_card.rank <= 5 and player.grace_points >= 2:
-                            player.grace_points -= GRACE_HAND_SWAP_COST
-                            hand.remove(worst_card)
-                            new_card = self.remaining_deck.pop(0)
-                            hand.append(new_card)
-                            self.remaining_deck.append(worst_card)
+                        avg_rank = sum(c.rank for c in non_trump) / len(non_trump)
+                        if avg_rank <= 2.5 and player.grace_points >= GRACE_HAND_SWAP_COST + 1:
+                            old_hand = hand[:]
+                            self.remaining_deck.extend(hand)
+                            hand.clear()
                             self.rng.shuffle(self.remaining_deck)
-                            self._log(f"{player.name} 手札交換: {worst_card} → {new_card}")
+                            for _ in range(len(old_hand)):
+                                hand.append(self.remaining_deck.pop(0))
+                            player.grace_points -= GRACE_HAND_SWAP_COST
+                            self._log(f"{player.name} 手札全交換: {' '.join(str(c) for c in old_hand)} → {' '.join(str(c) for c in hand)}")
                 self.sub_phase += 1
             else:
                 # 人間プレイヤー: 恩寵があれば交換の機会を与える
@@ -2270,7 +2722,7 @@ class GameEngine:
                 sealed = seal_cards(player, hand, self.set_index)
                 self.sealed_by_player[player.name] = sealed
                 self.playable_hands[player.name] = hand[:]
-                self._log(f"{player.name} 封印: {', '.join(str(c) for c in sealed)}")
+                self._log(f"{player.name} 公開封印: {', '.join(str(c) for c in sealed)}")
                 self.sub_phase += 1
             else:
                 self._pending_input = InputRequest(
@@ -2295,6 +2747,10 @@ class GameEngine:
         if self.phase == "trick":
             return self._process_trick()
 
+        # Phase: grace_priority
+        if self.phase == "grace_priority":
+            return self._process_grace_priority()
+
         # Phase: upgrade_pick
         if self.phase == "upgrade_pick":
             if self.upgrade_pick_index >= len(self.ranked_players):
@@ -2318,8 +2774,12 @@ class GameEngine:
                     self._log(f"{player.name} が {gold_amount} 金貨を獲得")
                 else:
                     self.revealed_upgrades.remove(choice)
-                    apply_upgrade(player, choice)
-                    self._log(f"{player.name} 獲得: {upgrade_name(choice)}")
+                    level_up = None
+                    if choice in ("UP_TRADE", "UP_HUNT", "UP_PRAY", "UP_RITUAL") and player.personal_spots.count(choice) >= 1:
+                        level_up = _bot_choose_level_up(player, choice)
+                    apply_upgrade(player, choice, level_up)
+                    lv_info = " → Lv2" if level_up is True else (" → 別枠" if level_up is False else "")
+                    self._log(f"{player.name} 獲得: {upgrade_name(choice)}{lv_info}")
                 self.upgrade_pick_index += 1
             else:
                 self._pending_input = InputRequest(
@@ -2349,14 +2809,13 @@ class GameEngine:
                     self._log(f"救済: {fourth.name} +{GRACE_4TH_PLACE_BONUS} 恩寵")
                     chose_grace = True
                 elif GRACE_ENABLED:
-                    # 恩寵閾値に近い場合は恩寵を選択
-                    for threshold, bonus in GRACE_THRESHOLD_BONUS:
-                        diff = threshold - fourth.grace_points
-                        if 0 < diff <= 2:  # 閾値まであと2点以内
-                            fourth.grace_points += GRACE_4TH_PLACE_BONUS
-                            self._log(f"救済: {fourth.name} +{GRACE_4TH_PLACE_BONUS} 恩寵")
-                            chose_grace = True
-                            break
+                    # 次の5恩寵境界に近い場合は恩寵を選択
+                    next_boundary = (fourth.grace_points // GRACE_VP_PER_N + 1) * GRACE_VP_PER_N
+                    diff = next_boundary - fourth.grace_points
+                    if 0 < diff <= 2:  # 次の5恩寵境界まであと2点以内
+                        fourth.grace_points += GRACE_4TH_PLACE_BONUS
+                        self._log(f"救済: {fourth.name} +{GRACE_4TH_PLACE_BONUS} 恩寵")
+                        chose_grace = True
 
                 if not chose_grace:
                     # 金貨を選択
@@ -2364,7 +2823,7 @@ class GameEngine:
                     self._log(f"救済: {fourth.name} +{self.config.rescue_gold_for_4th} 金貨")
 
                 self.phase = "worker_placement"
-                self.wp_player_index = 0
+                self.wp_placement_state = None
             else:
                 # 人間プレイヤー
                 if GRACE_ENABLED:
@@ -2382,33 +2841,72 @@ class GameEngine:
                     fourth.gold += self.config.rescue_gold_for_4th
                     self._log(f"救済: {fourth.name} +{self.config.rescue_gold_for_4th} 金貨")
                     self.phase = "worker_placement"
-                    self.wp_player_index = 0
+                    self.wp_placement_state = None
             return True
 
-        # Phase: worker_placement
+        # Phase: worker_placement (ナショエコ式ラウンドロビン)
         if self.phase == "worker_placement":
-            if self.wp_player_index >= len(self.players):
+            # 初回: PlacementState初期化
+            if self.wp_placement_state is None:
+                self.wp_placement_state = PlacementState()
+                self.wp_placement_state.all_players = self.players
+                self.wp_order = determine_placement_order(self.players, self.leader_index, self.wp_grace_priority)
+                self.wp_placement_state.placement_order = self.wp_order
+                for p in self.players:
+                    self.wp_placement_state.workers_remaining[p.name] = p.basic_workers_total
+                    self.wp_placement_state.personal_spots_used[p.name] = set()
+                self.wp_order_idx = 0
+                self._log(f"配置順: {' → '.join(p.name for p in self.wp_order)}")
+
+            ps = self.wp_placement_state
+
+            # 全員配置完了チェック
+            if not any(ps.workers_remaining[p.name] > 0 for p in self.wp_order):
+                self.wp_placement_state = None  # reset for next round
                 self.phase = "wage_payment"
                 return True
 
-            player = self.players[self.wp_player_index]
+            # 現在のプレイヤーを見つける（ワーカー残りがある次のプレイヤー）
+            player = None
+            for _ in range(len(self.wp_order)):
+                candidate = self.wp_order[self.wp_order_idx % len(self.wp_order)]
+                if ps.workers_remaining[candidate.name] > 0:
+                    player = candidate
+                    break
+                self.wp_order_idx += 1
+
+            if player is None:
+                self.wp_placement_state = None
+                self.phase = "wage_payment"
+                return True
+
+            available = get_available_actions(player, ps)
+
+            if not available:
+                # PASS
+                ps.workers_remaining[player.name] = 0
+                self._log(f"{player.name}: PASS（配置先なし）")
+                self.wp_order_idx += 1
+                return True
 
             if player.is_bot:
-                actions = choose_actions_for_player(player, self.round_no)
-                resolve_actions(player, actions)
-                self._log(f"{player.name} アクション: {actions}")
-                self.wp_player_index += 1
+                action = bot_choose_single_action(player, available, ps, self.round_no)
+                result = resolve_single_action(player, action, ps)
+                ps.workers_remaining[player.name] -= 1
+                effects_str = ", ".join(result["effects"])
+                self._log(f"{player.name}: {result['display']} → {effects_str}")
+                self.wp_order_idx += 1
             else:
                 self._pending_input = InputRequest(
                     type="worker_actions",
                     player=player,
                     context={
-                        "num_workers": player.basic_workers_total,
-                        "witches": player.witches[:],
-                        "available_actions": get_available_actions(player),
+                        "num_workers": ps.workers_remaining[player.name],
+                        "available_actions": available,
+                        "placement_state": ps,
+                        "player_name": player.name,
                     }
                 )
-                self.wp_player_index += 1
                 return True
             return True
 
@@ -2480,9 +2978,15 @@ class GameEngine:
                     status = "✓" if p.tricks_won_this_round == p.declared_tricks else ""
                     self._log(f"  {p.name}: {p.tricks_won_this_round} トリック (宣言 {p.declared_tricks}) {status}")
                 self._apply_declaration_bonus()
-                self.ranked_players = rank_players_for_upgrade(self.players, self.leader_index)
-                self.upgrade_pick_index = 0
-                self.phase = "upgrade_pick"
+                # Grace priority
+                self.wp_grace_priority = set()
+                if GRACE_ENABLED:
+                    self._grace_priority_pending_players = self._get_grace_priority_candidates()
+                    self._grace_priority_idx = 0
+                    if self._grace_priority_pending_players:
+                        self.phase = "grace_priority"
+                        return True
+                self._finish_tricks_to_upgrade()
             else:
                 self._start_trick()
             return True
@@ -2498,6 +3002,7 @@ class GameEngine:
             if self.lead_card is None:
                 self.lead_card = chosen
             self.trick_player_offset += 1
+            self.trick_play_just_happened = True
         else:
             legal = legal_cards(hand, self.lead_card)
             self._pending_input = InputRequest(
@@ -2514,6 +3019,53 @@ class GameEngine:
             return True
         return True
 
+    def _get_grace_priority_candidates(self) -> List[Player]:
+        """恩寵先行権の候補プレイヤーを返す"""
+        trick_counts = [p.tricks_won_this_round for p in self.players]
+        has_ties = len(trick_counts) != len(set(trick_counts))
+        if not has_ties:
+            return []
+        candidates = []
+        for p in self.players:
+            if p.grace_points < GRACE_PRIORITY_COST:
+                continue
+            tied = [q for q in self.players if q.name != p.name and q.tricks_won_this_round == p.tricks_won_this_round]
+            if tied:
+                candidates.append(p)
+        return candidates
+
+    def _process_grace_priority(self) -> bool:
+        """恩寵先行権フェーズの処理"""
+        while self._grace_priority_idx < len(self._grace_priority_pending_players):
+            p = self._grace_priority_pending_players[self._grace_priority_idx]
+            if p.is_bot:
+                # Bot: 恩寵に余裕があれば先行権を使う
+                if p.grace_points >= GRACE_PRIORITY_COST + 2:
+                    p.grace_points -= GRACE_PRIORITY_COST
+                    self.wp_grace_priority.add(p.name)
+                    self._log(f"{p.name} が先行権を獲得 (恩寵 -{GRACE_PRIORITY_COST})")
+                self._grace_priority_idx += 1
+            else:
+                # Human: pending input
+                self._pending_input = InputRequest(
+                    type="grace_priority",
+                    player=p,
+                    context={
+                        "cost": GRACE_PRIORITY_COST,
+                        "grace": p.grace_points,
+                    },
+                )
+                return True
+        # All done
+        self._finish_tricks_to_upgrade()
+        return True
+
+    def _finish_tricks_to_upgrade(self):
+        """トリック終了後、アップグレード選択フェーズへ移行"""
+        self.ranked_players = rank_players_for_upgrade(self.players, self.leader_index, self.wp_grace_priority)
+        self.upgrade_pick_index = 0
+        self.phase = "upgrade_pick"
+
     def _apply_declaration_bonus(self):
         """Apply declaration bonus to players who matched their declaration."""
         bonus_vp = self.config.declaration_bonus_vp
@@ -2521,50 +3073,61 @@ class GameEngine:
             if p.tricks_won_this_round == p.declared_tricks:
                 p.vp += bonus_vp
                 self._log(f"宣言成功: {p.name} が {p.declared_tricks} を的中 -> +{bonus_vp} VP")
-                # WITCH_PROPHET: 宣言成功時+1金
-                if "WITCH_PROPHET" in p.witches:
-                    p.gold += 1
-                    self._log(f"  (《的中の魔女》効果: +1金)")
-                # 宣言0成功で恩寵ボーナス
+                # ピタリ賞: 宣言成功で+1恩寵
+                if GRACE_ENABLED:
+                    p.grace_points += 1
+                    self._log(f"  (ピタリ賞: +1恩寵)")
+                # 宣言0成功で追加恩寵ボーナス
                 if GRACE_ENABLED and p.declared_tricks == 0:
-                    # WITCH_ZERO_MASTER: 宣言0成功時+2恩寵（通常+1の代わり）
                     if "WITCH_ZERO_MASTER" in p.witches:
-                        p.grace_points += 2
-                        self._log(f"  (《慎重な予言者》効果: +2恩寵)")
-                    else:
-                        p.grace_points += GRACE_DECLARATION_ZERO_BONUS
-                        self._log(f"  (宣言0成功ボーナス: +{GRACE_DECLARATION_ZERO_BONUS} 恩寵)")
+                        # 慎重な予言者: GameEngineではBot AIで自動選択
+                        choice = _choose_zero_master_reward(p, force_bot=True)
+                        if choice == "GRACE":
+                            p.grace_points += WITCH_ZERO_GRACE
+                            self._log(f"  (《慎重な予言者》効果: +{WITCH_ZERO_GRACE}恩寵)")
+                        elif choice == "GOLD":
+                            p.gold += WITCH_ZERO_GOLD
+                            self._log(f"  (《慎重な予言者》効果: +{WITCH_ZERO_GOLD}金)")
+                        elif choice == "VP":
+                            p.vp += WITCH_ZERO_VP
+                            self._log(f"  (《慎重な予言者》効果: +{WITCH_ZERO_VP}VP)")
+        # WITCH_MIRROR: 他プレイヤーの宣言成功時+1金
+        others_success_count = sum(1 for p in self.players if p.tricks_won_this_round == p.declared_tricks)
+        for p in self.players:
+            if "WITCH_MIRROR" in p.witches:
+                own_success = 1 if p.tricks_won_this_round == p.declared_tricks else 0
+                mirror_gold = others_success_count - own_success
+                if mirror_gold > 0:
+                    p.gold += mirror_gold
+                    self._log(f"《鏡の魔女》効果: {p.name} → 他者{mirror_gold}人成功 → +{mirror_gold}金")
 
     def _finish_game(self):
         """Finalize game and determine winner."""
-        # WITCH_TREASURE: 金貨→恩寵変換（閾値ボーナス計算前に実行）
-        if GRACE_ENABLED:
-            self._log("--- 金貨→恩寵変換（魔女効果）---")
+        # 金貨→恩寵変換（恩寵→VP変換の前に適用）
+        if GRACE_ENABLED and GOLD_TO_GRACE_RATE > 0:
+            self._log("--- 金貨→恩寵変換 ---")
             for p in self.players:
-                if "WITCH_TREASURE" in p.witches and p.gold > 0:
-                    grace_gained = p.gold
+                grace_gained = p.gold // GOLD_TO_GRACE_RATE
+                if grace_gained > 0:
+                    gold_spent = grace_gained * GOLD_TO_GRACE_RATE
+                    p.gold -= gold_spent
                     p.grace_points += grace_gained
-                    self._log(f"{p.name}: {p.gold}金貨 → +{grace_gained}恩寵 (《財宝変換の魔女》)")
-
-        # 恩寵ポイント閾値ボーナス（ゲーム終了時）
-        if GRACE_ENABLED:
-            self._log("--- 恩寵ポイント閾値ボーナス ---")
-            for p in self.players:
-                # 最高の閾値のみ適用（累計ではない）
-                threshold_bonus = 0
-                threshold_reached = 0
-                for threshold, bonus in GRACE_THRESHOLD_BONUS:
-                    if p.grace_points >= threshold:
-                        threshold_bonus = bonus
-                        threshold_reached = threshold
-                        break
-                if threshold_bonus > 0:
-                    p.vp += threshold_bonus
-                    self._log(f"{p.name}: 恩寵{p.grace_points}点 ({threshold_reached}+到達) → +{threshold_bonus}VP")
+                    self._log(f"{p.name}: {gold_spent}G → +{grace_gained}恩寵 (残{p.gold}G)")
                 else:
-                    self._log(f"{p.name}: 恩寵{p.grace_points}点 (閾値未到達)")
+                    self._log(f"{p.name}: {p.gold}G ({GOLD_TO_GRACE_RATE}G未満)")
 
-        # 金貨→VP変換
+        # 恩寵→VP変換（ゲーム終了時）
+        if GRACE_ENABLED:
+            self._log("--- 恩寵→VP変換 ---")
+            for p in self.players:
+                grace_bonus = (p.grace_points // GRACE_VP_PER_N) * GRACE_VP_AMOUNT
+                if grace_bonus > 0:
+                    p.vp += grace_bonus
+                    self._log(f"{p.name}: 恩寵{p.grace_points}点 ({p.grace_points // GRACE_VP_PER_N}×{GRACE_VP_AMOUNT}) → +{grace_bonus}VP")
+                else:
+                    self._log(f"{p.name}: 恩寵{p.grace_points}点 ({GRACE_VP_PER_N}未満)")
+
+        # 金貨→VP変換（恩寵変換後の残り金貨）
         gold_to_vp_rate = self.config.gold_to_vp_rate
         self._log("--- 金貨→VP変換 ---")
         for p in self.players:
@@ -2573,11 +3136,22 @@ class GameEngine:
                 self._log(f"{p.name}: {p.gold}金貨 -> +{bonus_vp}VP")
                 p.vp += bonus_vp
 
+        # 負債ペナルティ（ゲーム終了時）
+        self._log("--- 負債ペナルティ ---")
+        for p in self.players:
+            if p.accumulated_debt > 0:
+                penalty = calculate_debt_penalty(p.accumulated_debt)
+                p.vp -= penalty
+                self._log(f"{p.name}: 累積負債{p.accumulated_debt}金 → -{penalty}VP")
+            else:
+                self._log(f"{p.name}: 負債なし")
+
         self.phase = "game_end"
         players_sorted = sorted(self.players, key=lambda p: (p.vp, p.gold), reverse=True)
         self._log("=== ゲーム終了 ===")
         for i, p in enumerate(players_sorted, start=1):
-            self._log(f"{i}. {p.name} VP={p.vp} 金貨={p.gold}")
+            debt_info = f" 負債={p.accumulated_debt}" if p.accumulated_debt > 0 else ""
+            self._log(f"{i}. {p.name} VP={p.vp} 金貨={p.gold}{debt_info}")
         self._log(f"勝者: {players_sorted[0].name}")
 
 
@@ -2585,8 +3159,10 @@ class GameEngine:
 
 def run_single_game_quiet(
     seed: int,
-    max_rank: int = 6,
+    max_rank: int = 5,
     num_decks: int = NUM_DECKS,
+    gold_to_grace_rate: int = GOLD_TO_GRACE_RATE,
+    zero_tricks_gold: int = 0,
 ) -> Dict[str, Any]:
     """Run a single game with all bots, no output. Returns final scores."""
     rng = random.Random(seed)
@@ -2631,6 +3207,7 @@ def run_single_game_quiet(
 
         for p in players:
             p.tricks_won_this_round = 0
+            p.ritual_consumed_this_round = 0
 
         # Declaration
         full_hands = {p.name: p.sets[set_index][:] for p in players}
@@ -2667,32 +3244,53 @@ def run_single_game_quiet(
         for p in players:
             if p.tricks_won_this_round == p.declared_tricks:
                 p.vp += DECLARATION_BONUS_VP
-                # WITCH_PROPHET: 宣言成功時+1金
-                if "WITCH_PROPHET" in p.witches:
-                    p.gold += 1
-                # 宣言0成功で恩寵ボーナス
+                # ピタリ賞: 宣言成功で+1恩寵
+                if GRACE_ENABLED:
+                    p.grace_points += 1
+                # 宣言0成功で追加恩寵ボーナス
                 if GRACE_ENABLED and p.declared_tricks == 0:
-                    # WITCH_ZERO_MASTER: 宣言0成功時+2恩寵（通常+1の代わり）
                     if "WITCH_ZERO_MASTER" in p.witches:
-                        p.grace_points += 2
-                    else:
-                        p.grace_points += GRACE_DECLARATION_ZERO_BONUS
+                        choice = _choose_zero_master_reward(p)
+                        if choice == "GRACE":
+                            p.grace_points += WITCH_ZERO_GRACE
+                        elif choice == "GOLD":
+                            p.gold += WITCH_ZERO_GOLD
+                        elif choice == "VP":
+                            p.vp += WITCH_ZERO_VP
 
-        # 0トリックボーナス（宣言に関わらず0勝で恩寵獲得）
+        # WITCH_MIRROR: 他プレイヤーの宣言成功時+1金
+        others_success_count = sum(1 for p in players if p.tricks_won_this_round == p.declared_tricks)
+        for p in players:
+            if "WITCH_MIRROR" in p.witches:
+                own_success = 1 if p.tricks_won_this_round == p.declared_tricks else 0
+                mirror_gold = others_success_count - own_success
+                if mirror_gold > 0:
+                    p.gold += mirror_gold
+
+        # 0トリックボーナス（宣言に関わらず0勝で恩寵+金貨獲得）
         if GRACE_ENABLED:
             for p in players:
                 if p.tricks_won_this_round == 0:
                     p.grace_points += GRACE_ZERO_TRICKS_BONUS
+                    p.gold += zero_tricks_gold if zero_tricks_gold > 0 else ZERO_TRICKS_GOLD_BONUS
+
+        # Grace priority
+        grace_priority: Set[str] = set()
+        if GRACE_ENABLED:
+            grace_priority = _offer_grace_priority(players, leader_index, None, round_no)
 
         # Upgrade pick
-        ranked = rank_players_for_upgrade(players, leader_index)
+        ranked = rank_players_for_upgrade(players, leader_index, grace_priority)
         for p in ranked:
             choice = choose_upgrade_or_gold(p, revealed, round_no)
             if choice == "GOLD":
                 p.gold += TAKE_GOLD_INSTEAD
             else:
                 revealed.remove(choice)
-                apply_upgrade(p, choice)
+                level_up = None
+                if choice in ("UP_TRADE", "UP_HUNT", "UP_PRAY", "UP_RITUAL") and p.personal_spots.count(choice) >= 1:
+                    level_up = _bot_choose_level_up(p, choice)
+                apply_upgrade(p, choice, level_up)
 
         # 選ばれなかったカードを捨て札に移動（魔女ラウンドは捨てない）
         if revealed and not is_witch_round:
@@ -2701,10 +3299,8 @@ def run_single_game_quiet(
         fourth = ranked[-1]
         choose_4th_place_bonus(fourth, None, round_no)
 
-        # Worker placement
-        for p in players:
-            actions = choose_actions_for_player(p, round_no)
-            resolve_actions(p, actions)
+        # Worker placement（ナショエコ式）
+        run_worker_placement_round(players, round_no, leader_index, grace_priority=grace_priority)
 
         # Wage payment
         for p in players:
@@ -2716,33 +3312,37 @@ def run_single_game_quiet(
                 p.basic_workers_total += p.basic_workers_new_hires
                 p.basic_workers_new_hires = 0
 
-    # WITCH_TREASURE: 金貨→恩寵変換（閾値ボーナス計算前に実行）
-    if GRACE_ENABLED:
+    # Gold to Grace conversion at end (before grace→VP)
+    gold_converted = []
+    if gold_to_grace_rate > 0:
         for p in players:
-            if "WITCH_TREASURE" in p.witches and p.gold > 0:
-                p.grace_points += p.gold
+            grace_gained = p.gold // gold_to_grace_rate
+            gold_spent = grace_gained * gold_to_grace_rate
+            p.gold -= gold_spent
+            p.grace_points += grace_gained
+            gold_converted.append(grace_gained)
+    else:
+        gold_converted = [0] * len(players)
 
-    # Grace threshold bonus at game end
-    grace_stats = {"points": [], "threshold_reached": [], "bonus_vp": []}
+    # Grace bonus at game end (5恩寵毎→3VP)
+    grace_stats = {"points": [], "bonus_vp": []}
     if GRACE_ENABLED:
         for p in players:
             grace_stats["points"].append(p.grace_points)
-            threshold_bonus = 0
-            threshold_reached = 0
-            # リストは高い順(15→10→5)なので、最初にマッチした閾値が最高
-            for threshold, bonus in GRACE_THRESHOLD_BONUS:
-                if p.grace_points >= threshold:
-                    threshold_bonus = bonus
-                    threshold_reached = threshold
-                    break  # 最高閾値のみ適用
-            p.vp += threshold_bonus
-            grace_stats["threshold_reached"].append(threshold_reached)
-            grace_stats["bonus_vp"].append(threshold_bonus)
+            grace_bonus = (p.grace_points // GRACE_VP_PER_N) * GRACE_VP_AMOUNT
+            p.vp += grace_bonus
+            grace_stats["bonus_vp"].append(grace_bonus)
 
     # Gold to VP conversion at end
     for p in players:
         bonus_vp = p.gold // GOLD_TO_VP_RATE
         p.vp += bonus_vp
+
+    # Debt penalty at game end
+    for p in players:
+        if p.accumulated_debt > 0:
+            penalty = calculate_debt_penalty(p.accumulated_debt)
+            p.vp -= penalty
 
     # Return results
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
@@ -2766,6 +3366,7 @@ def run_single_game_quiet(
         "grace_points": grace_points,
         "grace_stats": grace_stats,
         "witch_stats": witch_stats,
+        "gold_converted_to_grace": gold_converted,
     }
 
 
@@ -2793,16 +3394,16 @@ def run_simulation(max_rank: int, num_games: int = 100) -> Dict[str, Any]:
 
 
 def run_all_simulations():
-    """Run simulations for rank ranges 6-10, 100 games each.
+    """Run simulations for rank ranges 5-10, 100 games each.
 
-    Note: max_rank must be at least 6 for 4 decks to have enough cards.
-    4 decks * 4 suits * 6 ranks = 96 cards + 4 trump = 100 total (need 96 for 4p*4r*6c)
+    Note: max_rank must be at least 5 for 2 decks to have enough cards.
+    2 decks * 4 suits * 5 ranks = 40 cards + 2 trump = 42 total (need 20 for 4p*5c)
     """
     print("=== カードランク最適化シミュレーション ===")
     print(f"各設定で100ゲーム実行中...\n")
 
     results = []
-    for max_rank in range(6, 11):
+    for max_rank in range(5, 11):
         print(f"ランク1-{max_rank} をテスト中...", end=" ", flush=True)
         result = run_simulation(max_rank, num_games=100)
         results.append(result)
@@ -2824,11 +3425,11 @@ def run_all_simulations():
 
 
 def run_deck_simulation(num_decks: int, num_games: int = 100) -> Dict[str, Any]:
-    """Run simulation with specified deck count. Trump is fixed at 4 cards (no rank)."""
+    """Run simulation with specified deck count. Trump is fixed at 2 cards (no rank)."""
     results = []
     for game_id in range(num_games):
         seed = game_id * 1000 + num_decks * 100
-        result = run_single_game_quiet(seed, max_rank=6, num_decks=num_decks)
+        result = run_single_game_quiet(seed, max_rank=5, num_decks=num_decks)
         results.append(result)
 
     vp_diffs = [r["vp_diff_1st_2nd"] for r in results]
@@ -2837,7 +3438,7 @@ def run_deck_simulation(num_decks: int, num_games: int = 100) -> Dict[str, Any]:
 
     return {
         "num_decks": num_decks,
-        "total_cards": num_decks * 24 + 4,  # 4suits * 6ranks = 24, plus 4 trumps
+        "total_cards": num_decks * 20 + TRUMP_COUNT,  # 4suits * 5ranks = 20, plus 2 trumps
         "num_games": num_games,
         "avg_vp_diff": avg_diff,
         "std_vp_diff": std_diff,
@@ -2845,9 +3446,9 @@ def run_deck_simulation(num_decks: int, num_games: int = 100) -> Dict[str, Any]:
 
 
 def run_all_deck_simulations():
-    """Run simulations for different deck counts. Trump is fixed at 4 cards (no rank)."""
+    """Run simulations for different deck counts. Trump is fixed at 2 cards (no rank)."""
     print("=== デッキ数最適化シミュレーション ===")
-    print("(切り札は4枚固定、ランクなし)")
+    print("(切り札は2枚固定、ランクなし)")
     print(f"各設定で100ゲーム実行中...\n")
 
     # テスト設定: デッキ3-5
@@ -2855,7 +3456,7 @@ def run_all_deck_simulations():
 
     results = []
     for num_decks in configs:
-        total = num_decks * 24 + 8
+        total = num_decks * 20 + TRUMP_COUNT
         print(f"{num_decks}デッキ (計{total}枚) をテスト中...", end=" ", flush=True)
         result = run_deck_simulation(num_decks, num_games=100)
         results.append(result)
@@ -2902,20 +3503,15 @@ def choose_actions_smart_bot(
 
     # 今ラウンドの給料を予測（初期ワーカーのみ給料発生）
     initial_wage_rate = WAGE_CURVE[round_no]
-    # 初期ワーカー数（アップグレードワーカーを除く）
-    initial_workers_count = min(INITIAL_WORKERS, n - player.upgraded_workers)
+    initial_workers_count = min(INITIAL_WORKERS, n)
     initial_workers_count = max(0, initial_workers_count)
     expected_wage = initial_workers_count * initial_wage_rate
 
-    # TRADEで稼げる額
-    trade_yield = player.trade_yield()
-    if "WITCH_BLACKROAD" in player.witches:
-        trade_yield += 2
+    # TRADEで稼げる額（共通スポット基準）
+    trade_yield = SHARED_TRADE_GOLD
 
-    # HUNTで稼げるVP
-    hunt_yield = player.hunt_yield()
-    if "WITCH_BLOODHUNT" in player.witches:
-        hunt_yield += 1
+    # HUNTで稼げるVP（共通スポット基準）
+    hunt_yield = SHARED_HUNT_VP
 
     # 借金1金あたりのペナルティ
     penalty_per_gold = debt_multiplier
@@ -3027,6 +3623,7 @@ def run_single_game_with_debt_config(
 
         for p in players:
             p.tricks_won_this_round = 0
+            p.ritual_consumed_this_round = 0
 
         # Declaration
         full_hands = {p.name: p.sets[set_index][:] for p in players}
@@ -3063,16 +3660,46 @@ def run_single_game_with_debt_config(
         for p in players:
             if p.tricks_won_this_round == p.declared_tricks:
                 p.vp += DECLARATION_BONUS_VP
+                # ピタリ賞: 宣言成功で+1恩寵
+                if GRACE_ENABLED:
+                    p.grace_points += 1
+                # 宣言0成功
+                if GRACE_ENABLED and p.declared_tricks == 0:
+                    if "WITCH_ZERO_MASTER" in p.witches:
+                        choice = _choose_zero_master_reward(p)
+                        if choice == "GRACE":
+                            p.grace_points += WITCH_ZERO_GRACE
+                        elif choice == "GOLD":
+                            p.gold += WITCH_ZERO_GOLD
+                        elif choice == "VP":
+                            p.vp += WITCH_ZERO_VP
+
+        # WITCH_MIRROR: 他プレイヤーの宣言成功時+1金
+        others_success_count = sum(1 for p in players if p.tricks_won_this_round == p.declared_tricks)
+        for p in players:
+            if "WITCH_MIRROR" in p.witches:
+                own_success = 1 if p.tricks_won_this_round == p.declared_tricks else 0
+                mirror_gold = others_success_count - own_success
+                if mirror_gold > 0:
+                    p.gold += mirror_gold
+
+        # Grace priority
+        grace_priority_d: Set[str] = set()
+        if GRACE_ENABLED:
+            grace_priority_d = _offer_grace_priority(players, leader_index, None, round_no)
 
         # Upgrade pick
-        ranked = rank_players_for_upgrade(players, leader_index)
+        ranked = rank_players_for_upgrade(players, leader_index, grace_priority_d)
         for p in ranked:
             choice = choose_upgrade_or_gold(p, revealed, round_no)
             if choice == "GOLD":
                 p.gold += TAKE_GOLD_INSTEAD
             else:
                 revealed.remove(choice)
-                apply_upgrade(p, choice)
+                level_up = None
+                if choice in ("UP_TRADE", "UP_HUNT", "UP_PRAY", "UP_RITUAL") and p.personal_spots.count(choice) >= 1:
+                    level_up = _bot_choose_level_up(p, choice)
+                apply_upgrade(p, choice, level_up)
 
         # 選ばれなかったカードを捨て札に移動（魔女ラウンドは捨てない）
         if revealed and not is_witch_round:
@@ -3081,14 +3708,8 @@ def run_single_game_with_debt_config(
         fourth = ranked[-1]
         choose_4th_place_bonus(fourth, None, round_no)
 
-        # Worker placement (with smart bot that considers debt penalty)
-        for p in players:
-            if use_tiered:
-                # 段階式の場合、ペナルティが軽いので借金回避意識が低い
-                actions = choose_actions_smart_bot(p, round_no, 1, 3)  # 実質max 3VP
-            else:
-                actions = choose_actions_smart_bot(p, round_no, debt_multiplier, debt_cap)
-            resolve_actions(p, actions)
+        # Worker placement（ナショエコ式）
+        run_worker_placement_round(players, round_no, leader_index, grace_priority=grace_priority_d)
 
         # Wage payment with configurable debt penalty
         # 初期ワーカーのみ給料発生（アップグレードワーカーは給料なし）
@@ -3097,16 +3718,15 @@ def run_single_game_with_debt_config(
             workers_hired_this_round = p.basic_workers_new_hires
 
             initial_wage_rate = WAGE_CURVE[round_no]
-            # 初期ワーカー数（アップグレードワーカーを除く）
-            initial_workers_count = min(INITIAL_WORKERS, workers_active - p.upgraded_workers)
+            # 儀式消費ワーカーも給料対象
+            workers_for_wage = workers_active + p.ritual_consumed_this_round
+            initial_workers_count = min(INITIAL_WORKERS, workers_for_wage)
             initial_workers_count = max(0, initial_workers_count)
 
             wage_gross = initial_workers_count * initial_wage_rate
 
             discount = 0
-            if p.recruit_upgrade == "RECRUIT_WAGE_DISCOUNT":
-                discount = workers_hired_this_round
-            if "WITCH_HERD" in p.witches and workers_hired_this_round > 0:
+            if "WITCH_HERD" in p.witches:
                 discount += 1
 
             wage_net = max(0, wage_gross - discount)
@@ -3116,14 +3736,10 @@ def run_single_game_with_debt_config(
                 p.gold -= wage_net
             else:
                 p.gold = 0
-                # Use configurable debt penalty
-                debt_penalty = calculate_debt_penalty_configurable(
-                    short, debt_multiplier, debt_cap, use_tiered
-                )
-                p.vp -= debt_penalty
+                # 負債を累積（ゲーム終了時にペナルティ適用）
+                p.accumulated_debt += short
                 total_debt_events += 1
                 total_debt_amount += short
-                total_debt_penalty += debt_penalty
 
         # Activate hires
         for p in players:
@@ -3131,26 +3747,33 @@ def run_single_game_with_debt_config(
                 p.basic_workers_total += p.basic_workers_new_hires
                 p.basic_workers_new_hires = 0
 
-    # WITCH_TREASURE: 金貨→恩寵変換（閾値ボーナス計算前に実行）
-    if GRACE_ENABLED:
+    # Gold to Grace conversion at end (before grace→VP)
+    if GRACE_ENABLED and GOLD_TO_GRACE_RATE > 0:
         for p in players:
-            if "WITCH_TREASURE" in p.witches and p.gold > 0:
-                p.grace_points += p.gold
+            grace_gained = p.gold // GOLD_TO_GRACE_RATE
+            if grace_gained > 0:
+                p.gold -= grace_gained * GOLD_TO_GRACE_RATE
+                p.grace_points += grace_gained
 
-    # Grace threshold bonus at game end
+    # Grace bonus at game end (5恩寵毎→3VP)
     if GRACE_ENABLED:
         for p in players:
-            threshold_bonus = 0
-            for threshold, bonus in GRACE_THRESHOLD_BONUS:
-                if p.grace_points >= threshold:
-                    threshold_bonus = bonus
-                    break
-            p.vp += threshold_bonus
+            grace_bonus = (p.grace_points // GRACE_VP_PER_N) * GRACE_VP_AMOUNT
+            p.vp += grace_bonus
 
     # Gold to VP conversion at end
     for p in players:
         bonus_vp = p.gold // GOLD_TO_VP_RATE
         p.vp += bonus_vp
+
+    # Debt penalty at game end (configurable)
+    for p in players:
+        if p.accumulated_debt > 0:
+            debt_penalty = calculate_debt_penalty_configurable(
+                p.accumulated_debt, debt_multiplier, debt_cap, use_tiered
+            )
+            p.vp -= debt_penalty
+            total_debt_penalty += debt_penalty
 
     # Return results
     players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
@@ -3262,18 +3885,16 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
     results = []
     for game_id in range(num_games):
         seed = game_id * 1000
-        result = run_single_game_quiet(seed, max_rank=6)
+        result = run_single_game_quiet(seed, max_rank=5)
         results.append(result)
 
     # Aggregate grace statistics
     all_grace_points = []
-    all_threshold_reached = []
     all_bonus_vp = []
 
     for r in results:
         all_grace_points.extend(r.get("grace_points", [0, 0, 0, 0]))
         stats = r.get("grace_stats", {})
-        all_threshold_reached.extend(stats.get("threshold_reached", [0, 0, 0, 0]))
         all_bonus_vp.extend(stats.get("bonus_vp", [0, 0, 0, 0]))
 
     # Calculate VP diff statistics
@@ -3285,12 +3906,7 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
     avg_grace = sum(all_grace_points) / len(all_grace_points) if all_grace_points else 0
     max_grace = max(all_grace_points) if all_grace_points else 0
     min_grace = min(all_grace_points) if all_grace_points else 0
-
-    # Threshold rates
-    threshold_5_count = sum(1 for t in all_threshold_reached if t >= 5)
-    threshold_10_count = sum(1 for t in all_threshold_reached if t >= 10)
-    threshold_13_count = sum(1 for t in all_threshold_reached if t >= 13)
-    total_players = len(all_threshold_reached)
+    total_players = len(all_grace_points)
 
     # Bonus VP statistics
     avg_bonus_vp = sum(all_bonus_vp) / len(all_bonus_vp) if all_bonus_vp else 0
@@ -3303,11 +3919,584 @@ def run_grace_simulation(num_games: int = 100) -> Dict[str, Any]:
         "avg_grace_points": avg_grace,
         "max_grace_points": max_grace,
         "min_grace_points": min_grace,
-        "threshold_5_rate": threshold_5_count / total_players if total_players > 0 else 0,
-        "threshold_10_rate": threshold_10_count / total_players if total_players > 0 else 0,
-        "threshold_13_rate": threshold_13_count / total_players if total_players > 0 else 0,
         "avg_bonus_vp": avg_bonus_vp,
         "bonus_rate": players_with_bonus / total_players if total_players > 0 else 0,
+    }
+
+
+def run_gold_to_grace_simulation(num_games: int = 500):
+    """金→恩寵変換レートの最適値をシミュレーションで算出する。"""
+    print("=== 金→恩寵変換レート シミュレーション ===")
+    print(f"{num_games}ゲーム × 各レート 実行中...\n")
+
+    # テストするレート: 0(変換なし), 1(1金=1恩寵), 2(2金=1恩寵), 3(3金=1恩寵), 4, 5
+    rates = [0, 1, 2, 3, 4, 5]
+
+    print(f"{'レート':>6} {'平均VP差':>10} {'VP差σ':>8} {'平均恩寵':>10} {'恩寵ボーナス率':>14} {'平均変換恩寵':>12} {'1位VP':>8} {'4位VP':>8} {'VP幅':>8}")
+    print("-" * 100)
+
+    all_results = {}
+    for rate in rates:
+        results = []
+        for game_id in range(num_games):
+            seed = game_id * 1000
+            result = run_single_game_quiet(seed, max_rank=5, gold_to_grace_rate=rate)
+            results.append(result)
+
+        # Aggregate
+        vp_diffs = [r["vp_diff_1st_2nd"] for r in results]
+        vp_diffs_last = [r["vp_diff_1st_last"] for r in results]
+        avg_vp_diff = sum(vp_diffs) / len(vp_diffs)
+        std_vp_diff = (sum((x - avg_vp_diff) ** 2 for x in vp_diffs) / len(vp_diffs)) ** 0.5
+
+        all_grace = []
+        all_bonus_vp = []
+        all_converted = []
+        all_1st_vp = []
+        all_4th_vp = []
+        for r in results:
+            all_grace.extend(r.get("grace_points", [0, 0, 0, 0]))
+            stats = r.get("grace_stats", {})
+            all_bonus_vp.extend(stats.get("bonus_vp", [0, 0, 0, 0]))
+            all_converted.extend(r.get("gold_converted_to_grace", [0, 0, 0, 0]))
+            all_1st_vp.append(r["vps"][0])
+            all_4th_vp.append(r["vps"][-1])
+
+        avg_grace = sum(all_grace) / len(all_grace)
+        bonus_rate = sum(1 for b in all_bonus_vp if b > 0) / len(all_bonus_vp) if all_bonus_vp else 0
+        avg_converted = sum(all_converted) / len(all_converted) if all_converted else 0
+        avg_1st = sum(all_1st_vp) / len(all_1st_vp)
+        avg_4th = sum(all_4th_vp) / len(all_4th_vp)
+        vp_spread = avg_1st - avg_4th
+
+        label = "変換なし" if rate == 0 else f"{rate}金=1恩寵"
+        print(f"{label:>6} {avg_vp_diff:>10.2f} {std_vp_diff:>8.2f} {avg_grace:>10.2f} {bonus_rate:>13.1%} {avg_converted:>12.2f} {avg_1st:>8.2f} {avg_4th:>8.2f} {vp_spread:>8.2f}")
+
+        all_results[rate] = {
+            "avg_vp_diff_1st_2nd": avg_vp_diff,
+            "std_vp_diff": std_vp_diff,
+            "avg_grace": avg_grace,
+            "bonus_rate": bonus_rate,
+            "avg_converted": avg_converted,
+            "avg_1st_vp": avg_1st,
+            "avg_4th_vp": avg_4th,
+            "vp_spread": vp_spread,
+        }
+
+    # 推奨レートの選定
+    print("\n" + "=" * 100)
+    print("【分析】")
+    print("- VP差(1-2位)が小さいほど接戦 = バランス良好")
+    print("- VP幅(1-4位)が適度に広い = 実力差が反映される")
+    print("- 恩寵ボーナス獲得率が高すぎると恩寵インフレ")
+    print("- 変換なし(0)との比較で改善度を確認")
+
+    return all_results
+
+
+def run_shared_spots_simulation(num_games: int = 500):
+    """共有スポット方式のシミュレーション（検証済み・所有者収入方式を採用）。
+    ※ 現在は共有スポット＋所有者収入方式が本番実装済み。このシミュレーションは参考用。
+    """
+    print("=== 共有スポット方式 シミュレーション ===")
+    print(f"{num_games}ゲーム × 各モード 実行中...\n")
+
+    modes = [
+        ("personal",     "現行（個人スポット）"),
+        ("shared_bonus", "共有＋所有者ボーナス（自分使用時+1効果）"),
+        ("shared_income", "共有＋所有者収入（他人使用時+1金）"),
+        ("shared_cost",  "共有＋使用コスト（他人使用時1金支払い→所有者）"),
+    ]
+
+    print(f"{'モード':<20} {'平均VP差':>8} {'VP差σ':>7} {'VP幅':>7} {'1位VP':>7} {'4位VP':>7} {'平均WP数':>8} {'平均金':>7} {'平均恩寵':>8}")
+    print("-" * 100)
+
+    for mode_id, mode_name in modes:
+        results = []
+        for game_id in range(num_games):
+            seed = game_id * 1000
+            result = _run_shared_spots_game(seed, mode_id)
+            results.append(result)
+
+        vp_diffs = [r["vp_diff_1st_2nd"] for r in results]
+        vp_spreads = [r["vp_spread"] for r in results]
+        avg_vp_diff = sum(vp_diffs) / len(vp_diffs)
+        std_vp_diff = (sum((x - avg_vp_diff) ** 2 for x in vp_diffs) / len(vp_diffs)) ** 0.5
+        avg_spread = sum(vp_spreads) / len(vp_spreads)
+        avg_1st = sum(r["vps"][0] for r in results) / len(results)
+        avg_4th = sum(r["vps"][-1] for r in results) / len(results)
+        avg_wp = sum(r["avg_wp_actions"] for r in results) / len(results)
+        avg_gold = sum(r["avg_end_gold"] for r in results) / len(results)
+        avg_grace = sum(r["avg_end_grace"] for r in results) / len(results)
+
+        print(f"{mode_name:<20} {avg_vp_diff:>8.2f} {std_vp_diff:>7.2f} {avg_spread:>7.2f} {avg_1st:>7.2f} {avg_4th:>7.2f} {avg_wp:>8.2f} {avg_gold:>7.2f} {avg_grace:>8.2f}")
+
+    print("\n" + "=" * 100)
+    print("【分析】")
+    print("- VP差(1-2位)が小さいほど接戦 = バランス良好")
+    print("- VP幅(1-4位)が適度: 狭すぎると実力差が出ない、広すぎると一方的")
+    print("- 平均WP数: ワーカー配置のアクション数（多いほどスポットが活用されている）")
+    print("- 所有者ボーナス: 自分使用時に効果+1（建設者メリット大）")
+    print("- 所有者収入: 他人使用時に所有者+1金（ナショエコ方式、間接収入）")
+    print("- 使用コスト: 他人使用時に1金支払い→所有者（使用者にコスト）")
+
+
+@dataclass
+class SharedSpot:
+    """共有スポットの情報"""
+    spot_type: str       # UP_TRADE, UP_HUNT, etc.
+    owner: str           # 設置したプレイヤー名
+    level: int = 1       # 1 or 2
+    used_this_round: bool = False
+
+
+@dataclass
+class SharedPlacementState:
+    """共有スポット方式のワーカー配置状態"""
+    shared_trade_taken: bool = False
+    shared_hunt_taken: bool = False
+    shared_pray_taken: bool = False
+    shared_spots: List[SharedSpot] = field(default_factory=list)
+    shared_spots_used: Set[int] = field(default_factory=set)  # 使用済みスポットindex
+    workers_remaining: Dict[str, int] = field(default_factory=dict)
+
+
+def _get_shared_available_actions(
+    player: Player, sps: SharedPlacementState, mode: str
+) -> List[str]:
+    """共有スポット方式で利用可能なアクション一覧"""
+    available: List[str] = []
+
+    if not sps.shared_trade_taken:
+        available.append("TRADE")
+    if not sps.shared_hunt_taken:
+        available.append("HUNT")
+    if GRACE_ENABLED and not sps.shared_pray_taken:
+        available.append("PRAY")
+
+    total_workers = player.basic_workers_total + player.basic_workers_new_hires
+    if total_workers < MAX_WORKERS and player.gold >= RECRUIT_COST:
+        available.append("RECRUIT")
+
+    # 共有スポット: 全プレイヤーが使用可能
+    for idx, spot in enumerate(sps.shared_spots):
+        if idx in sps.shared_spots_used:
+            continue
+        # コストチェック
+        if spot.spot_type == "WITCH_NEGOTIATE" and player.grace_points < WITCH_NEGOTIATE_GRACE_COST:
+            continue
+        # 共有コストモード: 他人のスポット使用にはコストが必要
+        if mode == "shared_cost" and spot.owner != player.name:
+            if player.gold < 1:
+                continue
+        available.append(f"SHARED:{idx}:{spot.spot_type}:{spot.owner}")
+
+    return available
+
+
+def _resolve_shared_action(
+    player: Player, action: str, sps: SharedPlacementState,
+    mode: str, players_by_name: Dict[str, 'Player']
+) -> Dict[str, Any]:
+    """共有スポット方式のアクション解決"""
+    result: Dict[str, Any] = {"action": action, "effects": []}
+
+    if action == "TRADE":
+        player.gold += SHARED_TRADE_GOLD
+        sps.shared_trade_taken = True
+        result["effects"].append(f"+{SHARED_TRADE_GOLD}金")
+    elif action == "HUNT":
+        player.vp += SHARED_HUNT_VP
+        sps.shared_hunt_taken = True
+        result["effects"].append(f"+{SHARED_HUNT_VP}VP")
+    elif action == "PRAY":
+        player.grace_points += SHARED_PRAY_GRACE
+        sps.shared_pray_taken = True
+        result["effects"].append(f"+{SHARED_PRAY_GRACE}恩寵")
+    elif action == "RECRUIT":
+        player.gold -= RECRUIT_COST
+        player.basic_workers_new_hires += 1
+        result["effects"].append(f"-{RECRUIT_COST}金, +1人(次R)")
+    elif action.startswith("SHARED:"):
+        parts = action.split(":", 3)
+        idx = int(parts[1])
+        spot_type = parts[2]
+        owner_name = parts[3]
+        sps.shared_spots_used.add(idx)
+
+        spot = sps.shared_spots[idx]
+        is_owner = (player.name == owner_name)
+        level = spot.level
+
+        # 所有者ボーナスモード: 自分のスポット使用時+1
+        owner_bonus = 0
+        if mode == "shared_bonus" and is_owner:
+            owner_bonus = 1
+
+        # 使用コスト/収入モード
+        if not is_owner:
+            if mode == "shared_cost":
+                player.gold -= 1
+                players_by_name[owner_name].gold += 1
+                result["effects"].append(f"-1金(使用料→{owner_name})")
+            elif mode == "shared_income":
+                players_by_name[owner_name].gold += 1
+                result["effects"].append(f"({owner_name}+1金収入)")
+
+        # 効果解決
+        if spot_type == "UP_TRADE":
+            gold = PERSONAL_TRADE_GOLD + (level - 1) + owner_bonus
+            if "WITCH_BLACKROAD" in player.witches:
+                gold += 1
+            player.gold += gold
+            result["effects"].append(f"+{gold}金")
+        elif spot_type == "UP_HUNT":
+            vp = PERSONAL_HUNT_VP + (level - 1) + owner_bonus
+            if "WITCH_BLOODHUNT" in player.witches:
+                vp += 1
+            player.vp += vp
+            result["effects"].append(f"+{vp}VP")
+        elif spot_type == "UP_PRAY":
+            grace = PERSONAL_PRAY_GRACE + (level - 1) + owner_bonus
+            player.grace_points += grace
+            result["effects"].append(f"+{grace}恩寵")
+        elif spot_type == "UP_RITUAL":
+            grace_amount = PERSONAL_RITUAL_GRACE + (level - 1) + owner_bonus
+            gold_amount = PERSONAL_RITUAL_GOLD + (level - 1) + owner_bonus
+            choice = _choose_ritual_reward(player, grace_amount, gold_amount)
+            if choice == "grace":
+                player.grace_points += grace_amount
+                result["effects"].append(f"+{grace_amount}恩寵")
+            else:
+                player.gold += gold_amount
+                result["effects"].append(f"+{gold_amount}金")
+            player.basic_workers_total -= 1
+            player.ritual_consumed_this_round += 1
+            result["effects"].append("ワーカー-1")
+        elif spot_type == "WITCH_NEGOTIATE":
+            player.grace_points -= WITCH_NEGOTIATE_GRACE_COST
+            player.gold += WITCH_NEGOTIATE_GOLD
+            result["effects"].append(f"-{WITCH_NEGOTIATE_GRACE_COST}恩寵, +{WITCH_NEGOTIATE_GOLD}金")
+
+    return result
+
+
+def _bot_choose_shared_action(
+    player: Player, available: List[str], sps: SharedPlacementState,
+    round_no: int, mode: str
+) -> str:
+    """共有スポット方式のBot AI"""
+    if not available:
+        return "PASS"
+
+    strat = STRATEGIES.get(player.strategy, STRATEGIES['BALANCED'])
+    expected_wage = calc_expected_wage(player, round_no)
+    gold_deficit = max(0, expected_wage - player.gold)
+    grace_awareness = strat.get('grace_awareness', 0.5)
+
+    scores: List[Tuple[float, str]] = []
+    for action in available:
+        score = 50.0
+        is_shared = action.startswith("SHARED:")
+        spot_type = ""
+        is_own_spot = False
+        if is_shared:
+            parts = action.split(":", 3)
+            spot_type = parts[2]
+            is_own_spot = (parts[3] == player.name)
+
+        if action == "TRADE" or (is_shared and spot_type == "UP_TRADE"):
+            score += 20
+            if gold_deficit > 0:
+                score += 35
+            if strat.get('prefer_gold', False):
+                score += 15
+            if action == "TRADE":
+                score += 5
+            # 所有者ボーナスの場合、自分のスポットを優先
+            if is_shared and is_own_spot and mode == "shared_bonus":
+                score += 10
+            # コストモードでは他人のスポット使用にペナルティ
+            if is_shared and not is_own_spot and mode == "shared_cost":
+                score -= 8
+        elif action == "HUNT" or (is_shared and spot_type == "UP_HUNT"):
+            score += 15
+            score += strat['hunt_ratio'] * 40
+            if action == "HUNT":
+                score += 5
+            if is_shared and is_own_spot and mode == "shared_bonus":
+                score += 10
+            if is_shared and not is_own_spot and mode == "shared_cost":
+                score -= 8
+        elif action == "PRAY" or (is_shared and spot_type == "UP_PRAY"):
+            score += grace_awareness * 25
+            if action == "PRAY":
+                score += 5
+            if is_shared and is_own_spot and mode == "shared_bonus":
+                score += 8
+        elif is_shared and spot_type == "WITCH_NEGOTIATE":
+            if gold_deficit > 0:
+                score += 35
+            else:
+                score += 10
+        elif is_shared and spot_type == "UP_RITUAL":
+            if player.basic_workers_total <= 2:
+                score -= 30
+            else:
+                score += 25
+                if gold_deficit > 0:
+                    score += 15
+        elif action == "RECRUIT":
+            total_spots = len(sps.shared_spots) + 3
+            if (round_no < 3 and player.basic_workers_total < strat.get('max_workers', 4)
+                    and player.basic_workers_total < total_spots
+                    and player.gold >= RECRUIT_COST + expected_wage):
+                score += 15
+            else:
+                score += 2
+
+        score += player.rng.random() * 10
+        scores.append((score, action))
+
+    scores.sort(key=lambda x: -x[0])
+    return scores[0][1]
+
+
+def _run_shared_spots_game(seed: int, mode: str) -> Dict[str, Any]:
+    """共有スポット方式で1ゲームを実行する。mode: personal/shared_bonus/shared_income/shared_cost"""
+    rng = random.Random(seed)
+    bot_rng = random.Random(seed + 100)
+    players = [
+        Player("P1", is_bot=True, rng=random.Random(seed + 1), strategy=assign_random_strategy(bot_rng)),
+        Player("P2", is_bot=True, rng=random.Random(seed + 2), strategy=assign_random_strategy(bot_rng)),
+        Player("P3", is_bot=True, rng=random.Random(seed + 3), strategy=assign_random_strategy(bot_rng)),
+        Player("P4", is_bot=True, rng=random.Random(seed + 4), strategy=assign_random_strategy(bot_rng)),
+    ]
+    for p in players:
+        p.sets = []
+    players_by_name = {p.name: p for p in players}
+
+    upgrade_deck = UpgradeDeck(rng)
+    witch_pool: List[str] = []
+    for w in ALL_WITCHES:
+        witch_pool.extend([w] * WITCH_POOL_COUNTS.get(w, 1))
+    rng.shuffle(witch_pool)
+
+    # 共有スポットボード（全ラウンド通して蓄積）
+    shared_board: List[SharedSpot] = []
+
+    total_wp_actions = 0
+
+    for round_no in range(ROUNDS):
+        _, _ = deal_round_cards(players, round_no, rng, None)
+
+        is_witch_round = (round_no == WITCH_ROUND)
+        if is_witch_round:
+            revealed = witch_pool[:REVEAL_UPGRADES]
+            witch_pool = witch_pool[REVEAL_UPGRADES:]
+        else:
+            revealed = upgrade_deck.reveal(REVEAL_UPGRADES)
+
+        set_index = round_no % SETS_PER_GAME
+        leader_index = round_no % len(players)
+
+        for p in players:
+            p.tricks_won_this_round = 0
+            p.ritual_consumed_this_round = 0
+
+        # Declaration
+        full_hands = {p.name: p.sets[set_index][:] for p in players}
+        for p in players:
+            p.declared_tricks = declare_tricks(p, full_hands[p.name][:], set_index)
+
+        # Seal
+        playable_hands = {}
+        for p in players:
+            hand = full_hands[p.name]
+            seal_cards(p, hand, set_index)
+            playable_hands[p.name] = hand[:]
+
+        # Play tricks
+        leader = leader_index
+        for trick_idx in range(TRICKS_PER_ROUND):
+            plays_t: List[Tuple[Player, Card]] = []
+            lead_card: Optional[Card] = None
+            for offset in range(len(players)):
+                idx = (leader + offset) % len(players)
+                pl = players[idx]
+                hand = playable_hands[pl.name]
+                chosen = choose_card(pl, lead_card, hand)
+                hand.remove(chosen)
+                plays_t.append((pl, chosen))
+                if lead_card is None:
+                    lead_card = chosen
+            assert lead_card is not None
+            winner = trick_winner(lead_card.suit, plays_t)
+            winner.tricks_won_this_round += 1
+            leader = next(i for i, pp in enumerate(players) if pp.name == winner.name)
+
+        # Declaration bonus
+        for p in players:
+            if p.tricks_won_this_round == p.declared_tricks:
+                p.vp += DECLARATION_BONUS_VP
+                if GRACE_ENABLED:
+                    p.grace_points += 1
+                if GRACE_ENABLED and p.declared_tricks == 0:
+                    if "WITCH_ZERO_MASTER" in p.witches:
+                        choice = _choose_zero_master_reward(p)
+                        if choice == "GRACE":
+                            p.grace_points += WITCH_ZERO_GRACE
+                        elif choice == "GOLD":
+                            p.gold += WITCH_ZERO_GOLD
+                        elif choice == "VP":
+                            p.vp += WITCH_ZERO_VP
+
+        # WITCH_MIRROR
+        others_success_count = sum(1 for p in players if p.tricks_won_this_round == p.declared_tricks)
+        for p in players:
+            if "WITCH_MIRROR" in p.witches:
+                own_success = 1 if p.tricks_won_this_round == p.declared_tricks else 0
+                mirror_gold = others_success_count - own_success
+                if mirror_gold > 0:
+                    p.gold += mirror_gold
+
+        # 0トリックボーナス（恩寵+金貨）
+        if GRACE_ENABLED:
+            for p in players:
+                if p.tricks_won_this_round == 0:
+                    p.grace_points += GRACE_ZERO_TRICKS_BONUS
+                    p.gold += ZERO_TRICKS_GOLD_BONUS
+                    self._log(f"0勝ボーナス: {p.name} +{GRACE_ZERO_TRICKS_BONUS}恩寵, +{ZERO_TRICKS_GOLD_BONUS}金")
+
+        # Grace priority
+        grace_priority: Set[str] = set()
+        if GRACE_ENABLED:
+            grace_priority = _offer_grace_priority(players, leader_index, None, round_no)
+
+        # Upgrade pick
+        ranked = rank_players_for_upgrade(players, leader_index, grace_priority)
+
+        if mode == "personal":
+            # 現行方式: 個人スポットとして獲得
+            for p in ranked:
+                choice = choose_upgrade_or_gold(p, revealed, round_no)
+                if choice == "GOLD":
+                    p.gold += TAKE_GOLD_INSTEAD
+                else:
+                    revealed.remove(choice)
+                    level_up = None
+                    if choice in ("UP_TRADE", "UP_HUNT", "UP_PRAY", "UP_RITUAL") and p.personal_spots.count(choice) >= 1:
+                        level_up = _bot_choose_level_up(p, choice)
+                    apply_upgrade(p, choice, level_up)
+        else:
+            # 共有スポット方式: アップグレードを共有ボードに配置
+            for p in ranked:
+                available_upgrades = [u for u in revealed if u not in ("WITCH_BLACKROAD", "WITCH_BLOODHUNT",
+                                      "WITCH_HERD", "WITCH_BLESSING", "WITCH_MIRROR", "WITCH_ZERO_MASTER")]
+                # 魔女カードはパッシブなので従来通り個人取得
+                witch_choices = [u for u in revealed if u.startswith("WITCH_") and u not in available_upgrades]
+
+                choice = choose_upgrade_or_gold(p, revealed, round_no)
+                if choice == "GOLD":
+                    p.gold += TAKE_GOLD_INSTEAD
+                elif choice.startswith("WITCH_") and choice != "WITCH_NEGOTIATE":
+                    # パッシブ魔女は個人取得
+                    revealed.remove(choice)
+                    apply_upgrade(p, choice, None)
+                else:
+                    # アクション系カード（UP_*, WITCH_NEGOTIATE）は共有ボードに配置
+                    revealed.remove(choice)
+                    # 既存の同種スポットをLv2にするか、新規追加か
+                    existing = [i for i, s in enumerate(shared_board)
+                                if s.spot_type == choice and s.owner == p.name and s.level == 1]
+                    if existing and choice in ("UP_TRADE", "UP_HUNT", "UP_PRAY", "UP_RITUAL"):
+                        # Lv2化
+                        shared_board[existing[0]].level = 2
+                    else:
+                        shared_board.append(SharedSpot(spot_type=choice, owner=p.name))
+
+        if revealed and not is_witch_round:
+            upgrade_deck.discard_remaining(revealed)
+
+        fourth = ranked[-1]
+        choose_4th_place_bonus(fourth, None, round_no)
+
+        # Worker placement
+        if mode == "personal":
+            run_worker_placement_round(players, round_no, leader_index, grace_priority=grace_priority)
+            for p in players:
+                total_wp_actions += p.basic_workers_total
+        else:
+            # 共有スポット方式のワーカー配置
+            sps = SharedPlacementState()
+            sps.shared_spots = shared_board
+            sps.shared_spots_used = set()
+            order = determine_placement_order(players, leader_index, grace_priority)
+            for p in players:
+                sps.workers_remaining[p.name] = p.basic_workers_total
+
+            while any(sps.workers_remaining[p.name] > 0 for p in order):
+                for p in order:
+                    if sps.workers_remaining[p.name] <= 0:
+                        continue
+                    avail = _get_shared_available_actions(p, sps, mode)
+                    if not avail:
+                        sps.workers_remaining[p.name] = 0
+                        continue
+                    action = _bot_choose_shared_action(p, avail, sps, round_no, mode)
+                    if action == "PASS":
+                        sps.workers_remaining[p.name] = 0
+                        continue
+                    _resolve_shared_action(p, action, sps, mode, players_by_name)
+                    sps.workers_remaining[p.name] -= 1
+                    total_wp_actions += 1
+
+            # ラウンド終了: 共有スポットの使用状態をリセット
+            for spot in shared_board:
+                spot.used_this_round = False
+
+        # Wage payment
+        for p in players:
+            pay_wages_and_debt(p, round_no)
+
+        # Activate hires
+        for p in players:
+            if p.basic_workers_new_hires > 0:
+                p.basic_workers_total += p.basic_workers_new_hires
+                p.basic_workers_new_hires = 0
+
+    # End-game scoring
+    if GRACE_ENABLED and GOLD_TO_GRACE_RATE > 0:
+        for p in players:
+            grace_gained = p.gold // GOLD_TO_GRACE_RATE
+            if grace_gained > 0:
+                p.gold -= grace_gained * GOLD_TO_GRACE_RATE
+                p.grace_points += grace_gained
+
+    if GRACE_ENABLED:
+        for p in players:
+            grace_bonus = (p.grace_points // GRACE_VP_PER_N) * GRACE_VP_AMOUNT
+            p.vp += grace_bonus
+
+    for p in players:
+        bonus_vp = p.gold // GOLD_TO_VP_RATE
+        p.vp += bonus_vp
+
+    for p in players:
+        if p.accumulated_debt > 0:
+            penalty = calculate_debt_penalty(p.accumulated_debt)
+            p.vp -= penalty
+
+    players_sorted = sorted(players, key=lambda p: (p.vp, p.gold), reverse=True)
+    vps = [p.vp for p in players_sorted]
+
+    return {
+        "vps": vps,
+        "vp_diff_1st_2nd": vps[0] - vps[1],
+        "vp_spread": vps[0] - vps[-1],
+        "avg_wp_actions": total_wp_actions / len(players),
+        "avg_end_gold": sum(p.gold for p in players) / len(players),
+        "avg_end_grace": sum(p.grace_points for p in players) / len(players),
     }
 
 
@@ -3318,9 +4507,9 @@ def run_witch_simulation(num_games: int = 1000) -> Dict[str, Any]:
         "WITCH_BLACKROAD": "《黒路の魔女》",
         "WITCH_BLOODHUNT": "《血誓の討伐官》",
         "WITCH_HERD": "《群導の魔女》",
-        "WITCH_TREASURE": "《財宝変換の魔女》",
+        "WITCH_NEGOTIATE": "《交渉の魔女》",
         "WITCH_BLESSING": "《祈祷の魔女》",
-        "WITCH_PROPHET": "《的中の魔女》",
+        "WITCH_MIRROR": "《鏡の魔女》",
         "WITCH_ZERO_MASTER": "《慎重な予言者》",
     }
 
@@ -3346,7 +4535,7 @@ def run_witch_simulation(num_games: int = 1000) -> Dict[str, Any]:
     # Run games
     for game_id in range(num_games):
         seed = game_id * 1000 + 999
-        result = run_single_game_quiet(seed, max_rank=6)
+        result = run_single_game_quiet(seed, max_rank=5)
 
         for player_stat in result["witch_stats"]:
             rank = player_stat["rank"]
@@ -3472,11 +4661,7 @@ def run_all_grace_simulations(num_games: int = 1000):
     print(f"  最小: {result['min_grace_points']}")
     print(f"  最大: {result['max_grace_points']}")
 
-    print(f"\n【閾値到達率】")
-    print(f"  10点以上到達率: {result['threshold_10_rate']*100:.1f}%")
-    print(f"  13点以上到達率: {result['threshold_13_rate']*100:.1f}%")
-
-    print(f"\n【恩寵ボーナス統計】")
+    print(f"\n【恩寵ボーナス統計】（{GRACE_VP_PER_N}恩寵毎→{GRACE_VP_AMOUNT}VP）")
     print(f"  ボーナス獲得率: {result['bonus_rate']*100:.1f}%")
     print(f"  平均ボーナスVP: {result['avg_bonus_vp']:.2f}")
 
@@ -3484,34 +4669,39 @@ def run_all_grace_simulations(num_games: int = 1000):
 
     # バランス評価
     print("\n【バランス評価】")
-    if result['avg_grace_points'] < 5:
-        print("  ⚠️ 恩寵獲得量が少なすぎます（平均5点未満）")
+    if result['avg_grace_points'] < 3:
+        print("  ⚠️ 恩寵獲得量が少なすぎます（平均3点未満）")
         print("     → 獲得手段を増やすか、獲得量を上げることを検討")
-    elif result['avg_grace_points'] > 15:
-        print("  ⚠️ 恩寵獲得量が多すぎます（平均15点超）")
+    elif result['avg_grace_points'] > 20:
+        print("  ⚠️ 恩寵獲得量が多すぎます（平均20点超）")
         print("     → 獲得量を調整することを検討")
     else:
         print("  ✓ 恩寵獲得量は適正範囲内です")
 
-    if result['threshold_10_rate'] < 0.15:
-        print("  ⚠️ 閾値到達率が低すぎます（10点到達率15%未満）")
-        print("     → 閾値を下げるか、獲得量を増やすことを検討")
-    elif result['threshold_10_rate'] > 0.6:
-        print("  ⚠️ 閾値到達が容易すぎます（10点到達率60%超）")
-        print("     → 閾値を上げることを検討")
+    avg_bonus = result['avg_bonus_vp']
+    if avg_bonus < 1:
+        print("  ⚠️ 恩寵ボーナスVPが少なすぎます（平均1VP未満）")
+    elif avg_bonus > 9:
+        print("  ⚠️ 恩寵ボーナスVPが多すぎます（平均9VP超）")
     else:
-        print("  ✓ 閾値バランスは適正範囲内です")
+        print("  ✓ 恩寵ボーナスバランスは適正範囲内です")
 
 
-def run_auto_game(seed: int = 42) -> dict:
+def run_auto_game(seed: int = 42, ai_bot: bool = False) -> dict:
     """Run a fully automated game with 4 bots for CI testing.
 
     Returns a dict with game results for verification.
     """
-    print(f"=== 自動実行モード (seed={seed}) ===")
+    bot_type = "AI (Haiku)" if ai_bot else "ルールベース"
+    print(f"=== 自動実行モード (seed={seed}, Bot: {bot_type}) ===")
     print("4体のBotでゲームを自動実行します\n")
 
     engine = GameEngine(seed=seed, all_bots=True)
+
+    # Enable AI for all bots if requested
+    if ai_bot:
+        for p in engine.players:
+            p.ai_bot = True
 
     # Run until game ends
     while engine.step():
@@ -3533,7 +4723,8 @@ def run_auto_game(seed: int = 42) -> dict:
     for i, p in enumerate(sorted_players, start=1):
         medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, "  ")
         grace_str = f"  恩寵: {p.get('grace_points', 0)}" if GRACE_ENABLED else ""
-        print(f"{medal} {i}位 {p['name']}: {p['vp']}VP, {p['gold']}G{grace_str}")
+        debt_str = f"  負債: {p.get('accumulated_debt', 0)}" if p.get('accumulated_debt', 0) > 0 else ""
+        print(f"{medal} {i}位 {p['name']}: {p['vp']}VP, {p['gold']}G{grace_str}{debt_str}")
 
     print("\n✅ ゲームが正常に完了しました")
 
@@ -3554,7 +4745,10 @@ if __name__ == "__main__":
     parser.add_argument("--simulate-debt-penalty", action="store_true", help="Run debt penalty optimization simulation")
     parser.add_argument("--simulate-grace", action="store_true", help="Run grace point system simulation")
     parser.add_argument("--simulate-witch", action="store_true", help="Run witch balance simulation")
+    parser.add_argument("--simulate-gold-grace", action="store_true", help="Run gold-to-grace conversion rate simulation")
+    parser.add_argument("--simulate-shared-spots", action="store_true", help="Run shared spots vs personal spots simulation")
     parser.add_argument("--auto", action="store_true", help="Run automated game with 4 bots (for CI testing)")
+    parser.add_argument("--ai-bot", action="store_true", help="Use AI (Anthropic Haiku) for bot decisions")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for --auto mode")
     parser.add_argument("--rich-ui", action="store_true", help="Run Rich UI server (browser-based)")
     parser.add_argument("--port", type=int, default=8080, help="Port for Rich UI server")
@@ -3571,8 +4765,12 @@ if __name__ == "__main__":
             run_all_grace_simulations()
         elif args.simulate_witch:
             run_all_witch_simulations()
+        elif args.simulate_gold_grace:
+            run_gold_to_grace_simulation()
+        elif args.simulate_shared_spots:
+            run_shared_spots_simulation()
         elif args.auto:
-            result = run_auto_game(seed=args.seed)
+            result = run_auto_game(seed=args.seed, ai_bot=args.ai_bot)
             sys.exit(0 if result["success"] else 1)
         elif args.rich_ui:
             from rich_ui_server import run_server
