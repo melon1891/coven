@@ -291,7 +291,26 @@ body {
 
 .opponent-cards {
     margin-top: var(--spacing-xs);
-    min-height: 30px;
+    min-height: 20px;
+    font-size: 0.8rem;
+}
+
+.sealed-label {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+.sealed-card {
+    font-weight: bold;
+    margin: 0 2px;
+}
+
+.sealed-card.suit-red {
+    color: #e74c3c;
+}
+
+.sealed-card.suit-black {
+    color: var(--text-primary);
 }
 
 /* Play Area */
@@ -547,31 +566,6 @@ body {
     font-weight: 600;
 }
 
-.levels-grid {
-    display: flex;
-    gap: var(--spacing-sm);
-    margin-bottom: var(--spacing-md);
-}
-
-.level-item {
-    flex: 1;
-    text-align: center;
-    padding: var(--spacing-xs);
-    background: var(--bg-secondary);
-    border-radius: var(--radius-sm);
-}
-
-.level-label {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    display: block;
-}
-
-.level-value {
-    font-weight: 600;
-    color: var(--gold-color);
-}
-
 .declaration-info {
     display: flex;
     justify-content: space-around;
@@ -820,6 +814,16 @@ body {
     color: var(--vp-color);
 }
 
+.ranking-detail {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-left: 0.5em;
+}
+
+.ranking-debt {
+    color: #e74c3c;
+}
+
 /* ======================================
    Utility Classes
    ====================================== */
@@ -837,6 +841,435 @@ body {
 /* ======================================
    Responsive Design
    ====================================== */
+/* ======================================
+   Trick Result Popup
+   ====================================== */
+.trick-result-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    animation: fadeIn 0.2s ease;
+}
+
+.trick-result-overlay.fade-out {
+    animation: fadeOut 0.2s ease forwards;
+}
+
+.trick-result-popup {
+    background: var(--bg-card);
+    border: 2px solid var(--accent-primary);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    min-width: 380px;
+    max-width: 500px;
+    text-align: center;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    animation: scaleIn 0.25s ease;
+}
+
+.trick-result-title {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--gold-color);
+    margin-bottom: var(--spacing-md);
+}
+
+.trick-result-cards {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.trick-result-play {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-md);
+    transition: all 0.2s ease;
+}
+
+.trick-result-play.winner {
+    background: rgba(255, 215, 0, 0.15);
+    border: 2px solid var(--gold-color);
+    border-radius: var(--radius-md);
+}
+
+.trick-result-player-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.trick-result-play.winner .trick-result-player-name {
+    color: var(--gold-color);
+}
+
+.trick-result-winner {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--success-color);
+    margin-bottom: var(--spacing-md);
+}
+
+.trick-result-ok {
+    min-width: 120px;
+    font-size: 1rem;
+}
+
+/* ======================================
+   Round Summary Popup
+   ====================================== */
+.round-summary-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    animation: fadeIn 0.2s ease;
+}
+
+.round-summary-overlay.fade-out {
+    animation: fadeOut 0.2s ease forwards;
+}
+
+.round-summary-popup {
+    background: var(--bg-card);
+    border: 2px solid var(--accent-primary);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    min-width: 400px;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    animation: scaleIn 0.25s ease;
+}
+
+.round-summary-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--gold-color);
+    text-align: center;
+    margin-bottom: var(--spacing-lg);
+}
+
+.round-summary-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+.round-summary-player {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+}
+
+.round-summary-player-name {
+    font-weight: 700;
+    font-size: 1rem;
+    margin-bottom: var(--spacing-xs);
+    color: var(--text-primary);
+}
+
+.round-summary-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-xs);
+}
+
+.round-summary-change {
+    font-size: 0.85rem;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+}
+
+.round-summary-change.positive {
+    color: var(--success-color);
+}
+
+.round-summary-change.negative {
+    color: var(--danger, #dc3545);
+}
+
+.round-summary-declaration {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-top: var(--spacing-xs);
+}
+
+.decl-success {
+    color: var(--success-color);
+    font-weight: 600;
+}
+
+.decl-fail {
+    color: var(--danger, #dc3545);
+    font-weight: 600;
+}
+
+.round-summary-log {
+    border-top: 1px solid var(--accent-secondary);
+    padding-top: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.round-summary-log-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.round-summary-log-entries {
+    max-height: 150px;
+    overflow-y: auto;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.round-summary-log-entry {
+    padding: 2px 0;
+}
+
+.round-summary-ok {
+    display: block;
+    margin: 0 auto;
+    min-width: 120px;
+    font-size: 1rem;
+}
+
+/* ======================================
+   Lobby Form (Start Screen)
+   ====================================== */
+.lobby-form {
+    max-width: 400px;
+    margin: 0 auto;
+}
+
+.form-group {
+    margin-bottom: var(--spacing-md);
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: var(--spacing-xs);
+    color: var(--text-secondary);
+}
+
+.form-group input {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--accent-secondary);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 1rem;
+    width: 200px;
+    text-align: center;
+}
+
+.start-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    align-items: center;
+}
+
+.join-room-group {
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: center;
+}
+
+.join-room-group input {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--accent-secondary);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 1rem;
+    width: 140px;
+    text-align: center;
+}
+
+.divider {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    color: var(--text-secondary);
+    width: 100%;
+}
+
+.divider::before,
+.divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--text-secondary);
+    opacity: 0.3;
+}
+
+.solo-play-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    align-items: center;
+}
+
+.ai-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.ai-toggle label {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ai-toggle input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-primary);
+}
+
+/* ======================================
+   Lobby Screen
+   ====================================== */
+#lobby-screen {
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+}
+
+.lobby-container {
+    text-align: center;
+    padding: var(--spacing-xl);
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    max-width: 500px;
+    width: 90%;
+}
+
+.lobby-container h2 {
+    color: var(--accent-primary);
+    margin-bottom: var(--spacing-lg);
+}
+
+.room-code-display {
+    font-size: 1.2rem;
+    margin: var(--spacing-lg) 0;
+}
+
+.room-code-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--gold-color);
+    letter-spacing: 4px;
+}
+
+.player-slots {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    margin: var(--spacing-lg) 0;
+}
+
+.player-slot {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+}
+
+.player-slot.occupied {
+    border-left: 3px solid var(--success-color);
+}
+
+.player-slot.empty {
+    border-left: 3px solid var(--text-secondary);
+    opacity: 0.6;
+}
+
+.player-slot .slot-number {
+    font-weight: 700;
+    color: var(--accent-primary);
+    min-width: 20px;
+}
+
+.player-slot .slot-name {
+    flex: 1;
+    text-align: left;
+}
+
+.player-slot .slot-status {
+    font-size: 0.85rem;
+}
+
+.slot-status.connected {
+    color: var(--success-color);
+}
+
+.slot-status.host {
+    color: var(--gold-color);
+}
+
+.lobby-actions {
+    display: flex;
+    gap: var(--spacing-md);
+    justify-content: center;
+    margin-top: var(--spacing-lg);
+}
+
+/* ======================================
+   Waiting Indicator
+   ====================================== */
+.waiting-indicator {
+    text-align: center;
+    padding: var(--spacing-lg);
+    color: var(--text-secondary);
+}
+
+.waiting-indicator .spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid var(--text-secondary);
+    border-top-color: var(--accent-primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-right: var(--spacing-sm);
+    vertical-align: middle;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
 @media (max-width: 768px) {
     .game-main {
         flex-direction: column;

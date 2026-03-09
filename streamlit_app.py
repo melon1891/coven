@@ -7,14 +7,20 @@ Run with: uv run streamlit run streamlit_app.py
 
 import streamlit as st
 import random
+import time
 from main import (
     GameEngine, GameConfig, Card, ROUNDS, TRICKS_PER_ROUND, CARDS_PER_SET,
     ACTIONS, TAKE_GOLD_INSTEAD, upgrade_name, upgrade_description, legal_cards,
-    WAGE_CURVE, UPGRADE_WORKER_COST, STRATEGIES,
+    WAGE_CURVE, STRATEGIES,
     START_GOLD, INITIAL_WORKERS, DECLARATION_BONUS_VP,
     DEBT_PENALTY_MULTIPLIER, DEBT_PENALTY_CAP, GOLD_TO_VP_RATE, RESCUE_GOLD_FOR_4TH,
     ALL_UPGRADES, DEFAULT_ENABLED_UPGRADES,
-    GRACE_ENABLED, GRACE_THRESHOLD_BONUS,
+    GRACE_ENABLED, GRACE_VP_PER_N, GRACE_VP_AMOUNT,
+    RECRUIT_COST,
+    PERSONAL_TRADE_GOLD, PERSONAL_HUNT_VP, PERSONAL_PRAY_GRACE,
+    PERSONAL_RITUAL_GRACE, PERSONAL_RITUAL_GOLD,
+    SHARED_TRADE_GOLD, SHARED_HUNT_VP, SHARED_PRAY_GRACE,
+    WITCH_NEGOTIATE_GRACE_COST, WITCH_NEGOTIATE_GOLD,
 )
 
 st.set_page_config(page_title="coven", layout="wide")
@@ -275,8 +281,8 @@ with st.sidebar:
 - **勝利条件**: 最終的に最も多くの **VP（勝利点）** を獲得
 
 **カード構成:**
-- 通常カード: 4スート（♠♥♦♣）× ランク1〜6 × 4セット（計96枚）
-- 切り札カード: 🌟（数字なし、計4枚）
+- 通常カード: 4スート（♠♥♦♣）× ランク1〜5 × 2セット（計80枚）
+- 切り札カード: 🌟（数字なし、計2枚）
         """)
 
     with st.expander("📋 ラウンドの流れ", expanded=False):
@@ -292,11 +298,13 @@ with st.sidebar:
 
 ### 3️⃣ トリックテイキング
 1. **宣言**: 手札を見て獲得目標トリック数を宣言（1〜4）
-2. **封印**: 1枚を封印（このラウンドは使用不可）
+2. **公開封印**: 1枚を公開封印（このラウンドは使用不可、全員に公開）
 3. **プレイ**: 残り4枚で4回のトリックを行う
 
 ### 4️⃣ アップグレード選択
 獲得トリック数の多いプレイヤーから順にアップグレードを選択
+- アップグレードは共有ボードに配置（全プレイヤーが使用可能）
+- 他プレイヤーがあなたのスポットを使うと、所有者に+1金（銀行から）
 - アップグレード辞退時は2金を獲得
 - 4位のプレイヤーは救済として+2金 または +1恩寵を選択
 
@@ -304,12 +312,12 @@ with st.sidebar:
 各ワーカーにアクションを割り当てて実行:
 | アクション | 効果 |
 |-----------|------|
-| TRADE | 金貨を獲得（2 + Trade Level） |
-| HUNT | VPを獲得（1 + Hunt Level） |
-| RECRUIT | ワーカー+1（次ラウンドから稼働） |
-| PRAY | 恩寵を獲得（1 + Pray Level） |
-| DONATE※ | 2金 → 1恩寵（アップグレードで解放） |
-| RITUAL※ | 1恩寵を獲得（アップグレードで解放） |
+| 交易 | 金貨を獲得（2 + 交易Level） |
+| 討伐 | VPを獲得（1 + 討伐Level） |
+| 雇用 | ワーカー+1（次ラウンドから稼働、上限5人） |
+| 祈り | 恩寵を獲得（1 + 祈りLevel） |
+| 儀式※ | 2恩寵 or 2金を選択（アップグレードで解放） |
+| 共有スポット | 他プレイヤーのスポットも使用可（所有者に+1金） |
 
 ### 6️⃣ 給料支払い
 初期ワーカーに給料を支払う（雇用ワーカーは取得時2金払済のため不要）
@@ -330,7 +338,7 @@ with st.sidebar:
 - **同ランク時**: 親（リード）に近いプレイヤーが勝利
 - 宣言通りのトリック数を獲得すると **+1 VP** ボーナス
 
-**🌟 切り札カード（計4枚、数字なし）:**
+**🌟 切り札カード（計2枚、数字なし）:**
 - リードスートをフォローできない時のみ使用可能
 - 切り札でリードすることはできない
 - 切り札 > 通常カード
@@ -342,17 +350,16 @@ with st.sidebar:
 **アップグレード種類:**
 | 名前 | 効果 |
 |------|------|
-| 交易拠点 改善 | TRADE収益 +2金（最大Lv2、Lv2で+4金） |
-| 魔物討伐 改善 | HUNT収益 +1VP（最大Lv2、Lv2で+2VP） |
+| 交易拠点 改善 | TRADE収益 +2金（最大Lv1、2→4金） |
+| 魔物討伐 改善 | HUNT収益 +1VP（最大Lv1、1→2VP） |
 | 祈りの祭壇 強化 | PRAY恩寵獲得 +1（最大Lv2、Lv2で+2恩寵） |
-| 寄付の祭壇 | DONATEアクション解放（2金→1恩寵） |
-| 儀式の祭壇 | RITUALアクション解放（1ワーカー→1恩寵） |
-| 見習い魔女派遣 | 即座にワーカー+2（取得時2金支払い、給料なし） |
-| 育成負担軽減の護符 | 雇用時のコストを軽減 |
+| 儀式の祭壇 | RITUALアクション解放（2恩寵 or 2金 選択） |
 | 魔女カード | 特殊能力を獲得（R3のみ） |
 
 **選択ルール:**
 - 獲得トリック数の多い順に選択
+- アップグレードは**共有ボード**に配置（全プレイヤーが使用可能）
+- 他プレイヤーがあなたのスポットを使うと、所有者に**+1金**（銀行から）
 - アップグレードを取らずに **2金** を得ることも可能
 - **4位のプレイヤー**: 救済として **+2金** または **+1恩寵** を選択
         """)
@@ -367,16 +374,15 @@ with st.sidebar:
 | **RECRUIT** | ワーカー+1 | - | - |
 | **PRAY** | 1恩寵 | 2恩寵 | 3恩寵 |
 
-**アップグレードで解放されるアクション:**
+**アップグレードで解放されるアクション（共有スポット）:**
 | アクション | 解放条件 | 効果 |
 |-----------|---------|------|
-| **DONATE** | 寄付の祭壇 | 2金消費 → 1恩寵 |
-| **RITUAL** | 儀式の祭壇 | 1ワーカー → 1恩寵 |
+| **RITUAL** | 儀式の祭壇 | 2恩寵 or 2金（選択） |
+
+※ アップグレードスポットは全プレイヤーが使用可能。他プレイヤーが使用すると所有者に+1金。
 
 **雇用ワーカーの仕組み:**
-- RECRUITで雇用 → 次ラウンドから稼働
-- アップグレード「見習い魔女派遣」で即時雇用も可能
-- **雇用ワーカーは取得時に2金支払い、以後給料なし**
+- RECRUITで雇用（2金消費） → 次ラウンドから稼働
 
 **負債ペナルティ（給料不足時）:**
 | 不足額 | ペナルティ |
@@ -388,16 +394,16 @@ with st.sidebar:
 
     with st.expander("✨ 恩寵システム", expanded=False):
         st.markdown("""
-**恩寵ポイント**は魔女協会からの信頼度を表し、ゲーム終了時に閾値ボーナスとしてVPに変換されます。
+**恩寵ポイント**は魔女協会からの信頼度を表します。ゲーム終了時、まず余った金貨が恩寵に変換され（2金=1恩寵）、その後恩寵がVPに変換されます。
 
 **恩寵の獲得方法:**
 | 条件 | 獲得量 |
 |------|--------|
 | 祈りアクション（PRAY） | 1恩寵（Lv0）〜3恩寵（Lv2） |
-| 寄付アクション（DONATE※） | 2金消費 → 1恩寵 |
-| 儀式アクション（RITUAL※） | 1ワーカー → 1恩寵 |
+| 儀式アクション（RITUAL※） | 2恩寵 or 2金（選択） |
+| 宣言成功（ピタリ賞） | +1恩寵 |
 | 宣言0成功 | +1恩寵 |
-| トリテ0勝 | +1恩寵 |
+| トリテ0勝 | +1恩寵, +1金 |
 | 4位救済（選択時） | +1恩寵 |
 | 《祈祷の魔女》 | PRAY実行時 +1恩寵（追加） |
 
@@ -406,13 +412,9 @@ with st.sidebar:
 **恩寵の消費:**
 - 手札交換（シール前）: 1恩寵消費で手札1枚をデッキトップと交換
 
-**閾値ボーナス（ゲーム終了時）:**
-| 恩寵ポイント | ボーナス |
-|-------------|---------|
-| 10点以上 | +5 VP |
-| 13点以上 | +8 VP |
-
-※累積ではなく、到達した最高の閾値のみ適用
+**ゲーム終了時の変換:**
+- 金貨→恩寵: 2金毎に1恩寵（先に適用）
+- 恩寵→VP: 5恩寵毎に3VP（端数切り捨て）
         """)
 
     with st.expander("🎯 攻略のヒント", expanded=False):
@@ -429,43 +431,53 @@ with st.sidebar:
 **終盤（R5-R6）:**
 - 負債ペナルティは上限-3VPなので、リスクを取れる場面も
 - 最終ラウンドは雇用より直接VP獲得が有利
-- 恩寵ポイント閾値ボーナスを意識
+- 恩寵ポイントを5の倍数に近づけてVP変換を意識
 
 **切り札の使い方:**
-- 切り札（4枚、数字なし）は「保険」として温存
+- 切り札（2枚、数字なし）は「保険」として温存
 - 宣言を達成するための最後の手段に
 - 同時に切り札が出た場合、親に近い方が勝利
 
 **恩寵ポイント:**
-- 10/13点で閾値ボーナス獲得
-- 祈り・寄付・儀式アクション、宣言0成功、0トリック等で獲得
+- 5恩寵毎に3VP変換（多く貯めるほど有利）
+- 祈り・儀式アクション、宣言成功、宣言0成功、0トリック等で獲得
         """)
 
     with st.expander("🧙 魔女カード一覧", expanded=False):
         st.markdown("""
-**《黒路の魔女》** - 交易強化
-> TRADEを行うたび、追加で+1金
+**《黒路の魔女》** - パッシブ(交易スポット+1金)
+> 交易スポット使用時、追加で+1金獲得
 > *かつて閉ざされた交易路を、魔法で「通れるもの」に変えた魔女。*
 
 ---
-**《血誓の討伐官》** - 討伐強化
-> HUNTを行うたび、追加で+1VP
+**《血誓の討伐官》** - パッシブ(討伐スポット+1VP)
+> 討伐スポット使用時、追加で+1VP獲得
 > *討伐の成功は、必ず誓約と引き換えに訪れる。*
 
 ---
-**《群導の魔女》** - 雇用支援
-> 見習いを雇用したラウンド、給料合計-1
+**《群導の魔女》** - 給料軽減（パッシブ）
+> 毎ラウンド給料合計-1
 > *見習いたちは彼女の合図ひとつで動く。*
 
 ---
-**《財宝変換の魔女》** - 金貨活用
-> ゲーム終了時、1金貨につき1VPに変換可能
-> *彼女の魔法は、金貨の価値を高める。*
+**《交渉の魔女》** - 共有スポット(1恩寵→2金)
+> 1恩寵を消費して2金獲得（他プレイヤーも使用可、使用時所有者+1金）
+> *彼女は言葉だけで金貨を動かす。それが「交渉」だ。*
 
 ---
-**《祈祷の魔女》** - 祈り強化
-> PRAYを行うたび、追加で+1恩寵
+**《祈祷の魔女》** - 毎R+1恩寵（パッシブ）
+> 毎ラウンド終了時、+1恩寵
 > *彼女の祈りは、誰よりも深く協会に届く。*
+
+---
+**《鏡の魔女》** - 他者成功時+1金（パッシブ）
+> 他プレイヤーの宣言成功時、+1金
+> *鏡に映るのは、他者の栄光。それが彼女の糧となる。*
+
+---
+**《慎重な予言者》** - 宣言0成功ボーナス（パッシブ）
+> 宣言0成功時、3恩寵/3金/2VPから選択
+> *何も取らないと宣言し、それを守る者を彼女は讃える。*
         """)
 
     st.divider()
@@ -641,7 +653,6 @@ def init_game():
             take_gold_instead=cfg["take_gold_instead"],
             rescue_gold_for_4th=cfg["rescue_gold_for_4th"],
             enabled_upgrades=enabled,
-            rounds=cfg.get("rounds", ROUNDS),
         )
     else:
         config = GameConfig()
@@ -662,6 +673,31 @@ def run_until_input():
         if not game.step():
             # Game ended
             st.session_state.awaiting_input = False
+            break
+        # Stop after a card play in a trick for animation
+        if game.trick_play_just_happened:
+            game.trick_play_just_happened = False
+            st.session_state.trick_animating = True
+            break
+
+
+def advance_trick_animation():
+    """Advance one step of trick animation."""
+    game = st.session_state.game
+    game.trick_play_just_happened = False
+    # Run until next card play, human input, or game end
+    while True:
+        if game.get_pending_input() is not None:
+            st.session_state.awaiting_input = True
+            st.session_state.trick_animating = False
+            break
+        if not game.step():
+            st.session_state.awaiting_input = False
+            st.session_state.trick_animating = False
+            break
+        if game.trick_play_just_happened:
+            game.trick_play_just_happened = False
+            st.session_state.trick_animating = True
             break
 
 
@@ -684,6 +720,9 @@ def card_display(card: Card) -> str:
 # Initialize session state
 if "game" not in st.session_state:
     init_game()
+
+if "trick_animating" not in st.session_state:
+    st.session_state.trick_animating = False
 
 game = st.session_state.game
 state = game.get_state()
@@ -730,15 +769,11 @@ for row in range(2):
                 st.caption(f"👷 {p['workers']}人")
             # 交易・討伐レベルをコンパクトに
             st.caption(f"交易Lv{p['trade_level']} / 討伐Lv{p['hunt_level']}")
-            # Show recruit upgrade (タップで効果表示)
-            if p.get("recruit_upgrade"):
-                u = p["recruit_upgrade"]
-                with st.popover(f"📦 {upgrade_name(u)}", help="タップで効果表示"):
-                    st.write(upgrade_description(u))
             # Show witches (タップで効果表示)
             if p.get("witches"):
                 witch_short = {"WITCH_BLACKROAD": "黒路", "WITCH_BLOODHUNT": "血誓", "WITCH_HERD": "群導",
-                              "WITCH_TREASURE": "財宝", "WITCH_BLESSING": "祈祷"}
+                              "WITCH_NEGOTIATE": "交渉", "WITCH_BLESSING": "祈祷",
+                              "WITCH_MIRROR": "鏡", "WITCH_ZERO_MASTER": "予言者"}
                 witch_cols = st.columns(len(p["witches"]))
                 for wi, w in enumerate(p["witches"]):
                     with witch_cols[wi]:
@@ -765,7 +800,7 @@ if state["revealed_upgrades"] and not state["game_over"]:
 
 # Sealed Cards display（2x2グリッドでモバイル対応）
 if state.get("sealed_by_player"):
-    with st.expander("🔒 封印されたカード", expanded=False):
+    with st.expander("🔓 公開封印されたカード", expanded=False):
         players = list(state["sealed_by_player"].items())
         for row in range(2):
             cols = st.columns(2)
@@ -789,6 +824,53 @@ if state["trick_history"]:
             plays_str = " | ".join(plays_display)
             winner_short = trick['winner'].replace("Player ", "P")
             st.markdown(f"**T{trick['trick_no']}**: {plays_str} → 🏆 **{winner_short}**")
+
+# Current Trick Plays - show cards as they are being played
+if state["phase"] == "trick" and (state.get("current_trick_plays") or st.session_state.get("trick_animating", False)):
+    st.subheader(f"🃏 トリック {state['current_trick'] + 1}")
+    plays = state.get("current_trick_plays", [])
+    play_cols = st.columns(4)
+    trick_leader = state.get("trick_leader", 0)
+    for i in range(4):
+        with play_cols[i]:
+            player_idx = (trick_leader + i) % 4
+            player_info = state["players"][player_idx]
+            player_name = player_info["name"]
+            is_human = not player_info["is_bot"]
+
+            # Check if this player has played
+            played_card = None
+            for pname, card in plays:
+                if pname == player_name:
+                    played_card = card
+                    break
+
+            if played_card is not None:
+                if hasattr(played_card, 'suit'):
+                    card_str = card_display(played_card)
+                else:
+                    card_str = str(played_card)
+                marker = " 👤" if is_human else ""
+                lead_mark = "⭐" if i == 0 else ""
+                st.markdown(
+                    f"<div style='text-align:center; padding:1rem; background:#e8f4fd; "
+                    f"border-radius:10px; border:2px solid #4a90d9; margin:0.25rem;'>"
+                    f"<div style='font-size:0.9rem; color:#333;'>{lead_mark}{player_name}{marker}</div>"
+                    f"<div style='font-size:1.8rem; color:#000; margin-top:0.5rem;'>{card_str}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                marker = " 👤" if is_human else ""
+                lead_mark = "⭐" if i == 0 else ""
+                st.markdown(
+                    f"<div style='text-align:center; padding:1rem; background:#f5f5f5; "
+                    f"border-radius:10px; border:2px dashed #ccc; margin:0.25rem;'>"
+                    f"<div style='font-size:0.9rem; color:#999;'>{lead_mark}{player_name}{marker}</div>"
+                    f"<div style='font-size:1.8rem; color:#ccc; margin-top:0.5rem;'>?</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
 
 st.divider()
 
@@ -823,10 +905,10 @@ if pending is not None:
             st.rerun()
 
     elif req_type == "seal":
-        st.subheader(f"🔒 封印フェーズ")
+        st.subheader(f"🔓 公開封印フェーズ")
         hand = context["hand"]
         need_seal = context["need_seal"]
-        st.info(f"📌 {need_seal}枚のカードを選んで封印（このラウンドはプレイ不可）")
+        st.info(f"📌 {need_seal}枚のカードを選んで公開封印（このラウンドはプレイ不可、全員に公開）")
 
         # 3列×2行のグリッドで表示（モバイル向け）
         selected_indices = []
@@ -847,7 +929,7 @@ if pending is not None:
         if selected_count != need_seal:
             st.warning(f"あと {need_seal - selected_count} 枚選んでください（選択中: {selected_count}枚）")
 
-        if st.button("🔒 封印する", type="primary", disabled=selected_count != need_seal, use_container_width=True):
+        if st.button("🔓 公開封印する", type="primary", disabled=selected_count != need_seal, use_container_width=True):
             sealed_cards = [hand[i] for i in selected_indices]
             game.provide_input(sealed_cards)
             run_until_input()
@@ -898,7 +980,8 @@ if pending is not None:
                         if is_legal:
                             if st.button(display_str, key=f"card_{idx}", type="primary", use_container_width=True):
                                 game.provide_input(card)
-                                run_until_input()
+                                game.trick_play_just_happened = False
+                                st.session_state.trick_animating = True
                                 st.rerun()
                         else:
                             st.button(display_str, key=f"card_{idx}", disabled=True, use_container_width=True)
@@ -934,6 +1017,23 @@ if pending is not None:
                 run_until_input()
                 st.rerun()
 
+    elif req_type == "upgrade_level_choice":
+        upgrade = context["upgrade"]
+        st.subheader(f"📜 {upgrade_name(upgrade)} の強化方法を選択")
+        st.info("2枚目のアップグレードを取得しました。強化方法を選んでください。")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⬆️ Lv2に強化\n(1スポット、効果+1)", type="primary", use_container_width=True):
+                game.provide_input(True)
+                run_until_input()
+                st.rerun()
+        with col2:
+            if st.button("➕ 別枠配置\n(独立Lv1×2)", type="secondary", use_container_width=True):
+                game.provide_input(False)
+                run_until_input()
+                st.rerun()
+
     elif req_type == "fourth_place_bonus":
         st.subheader(f"🎁 4位ボーナス")
         gold_amount = context["gold_amount"]
@@ -953,75 +1053,92 @@ if pending is not None:
                 run_until_input()
                 st.rerun()
 
+    elif req_type == "grace_priority":
+        cost = context.get("cost", GRACE_PRIORITY_COST)
+        grace = context.get("grace", 0)
+        st.subheader("先行権")
+        st.info(f"同トリック数のプレイヤーがいます。恩寵 {cost} を消費して先行権を得ますか？（恩寵: {grace}）")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("先行権を使う", type="primary", use_container_width=True):
+                game.provide_input(True)
+                run_until_input()
+                st.rerun()
+        with col2:
+            if st.button("使わない", type="secondary", use_container_width=True):
+                game.provide_input(False)
+                run_until_input()
+                st.rerun()
+
     elif req_type == "grace_hand_swap":
-        st.subheader(f"🔄 手札交換")
+        st.subheader(f"🔄 手札全交換")
         hand = context["hand"]
         grace_points = context["grace_points"]
         cost = context["cost"]
 
-        st.info(f"恩寵を{cost}消費して手札1枚を交換できます（現在の恩寵: {grace_points}）")
+        st.info(f"恩寵を{cost}消費して手札{len(hand)}枚を全て引き直せます（現在の恩寵: {grace_points}）")
 
         # 手札表示
-        st.write("交換するカードを選択:")
-        num_cards = len(hand)
-        cols_per_row = 3
-        rows = (num_cards + cols_per_row - 1) // cols_per_row
-        for row in range(rows):
-            cols = st.columns(cols_per_row)
-            for col in range(cols_per_row):
-                idx = row * cols_per_row + col
-                if idx < num_cards:
-                    card = hand[idx]
-                    with cols[col]:
-                        display_str = card_display(card)
-                        if st.button(display_str, key=f"swap_{idx}", use_container_width=True):
-                            game.provide_input(card)
-                            run_until_input()
-                            st.rerun()
+        st.write("現在の手札:")
+        cols = st.columns(min(len(hand), 5))
+        for idx, card in enumerate(hand):
+            with cols[idx % len(cols)]:
+                st.markdown(f"**{card_display(card)}**")
 
         st.divider()
-        if st.button("⏭️ スキップ", use_container_width=True):
-            game.provide_input(None)
-            run_until_input()
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 全交換する", type="primary", use_container_width=True):
+                game.provide_input(True)
+                run_until_input()
+                st.rerun()
+        with col2:
+            if st.button("⏭️ スキップ", use_container_width=True):
+                game.provide_input(None)
+                run_until_input()
+                st.rerun()
 
     elif req_type == "worker_actions":
-        st.subheader(f"👷 ワーカー配置")
+        st.subheader(f"👷 ワーカー配置 (1人ずつ)")
         num_workers = context["num_workers"]
-        available_actions = context.get("available_actions", ACTIONS)
+        available_actions = context.get("available_actions", [])
 
-        st.info(f"{num_workers}人のワーカーにアクションを割り当て")
+        st.info(f"残りワーカー: {num_workers}人 — 1つのアクションを選択")
 
-        # アクションの説明
-        action_info = {
-            "TRADE": "💰 交易（金貨を獲得）",
-            "HUNT": "⚔️ 討伐（VPを獲得）",
-            "RECRUIT": "🧑‍🤝‍🧑 雇用（次ラウンドからワーカー+1）",
-            "PRAY": "🙏 祈り（恩寵を獲得）",
-            "DONATE": "💝 寄付（2金→1恩寵）",
-            "RITUAL": "✨ 儀式（1恩寵獲得）"
-        }
+        # アクション名の表示用変換（レベル対応）
+        def action_display(act):
+            if act.startswith("SPOT:"):
+                _, _, name = act.split(":", 2)
+                level = player.personal_spots.count(name)
+                lv_tag = f" Lv{level}" if level >= 2 else ""
+                bonus = level - 1
+                names = {
+                    "UP_TRADE": f"💰 共有交易{lv_tag}({PERSONAL_TRADE_GOLD + bonus}金)",
+                    "UP_HUNT": f"⚔️ 共有討伐{lv_tag}({PERSONAL_HUNT_VP + bonus}VP)",
+                    "UP_PRAY": f"🙏 共有祈り{lv_tag}({PERSONAL_PRAY_GRACE + bonus}恩寵)",
+                    "UP_RITUAL": f"✨ 共有儀式{lv_tag}({PERSONAL_RITUAL_GRACE + bonus}恩寵 or {PERSONAL_RITUAL_GOLD + bonus}金, ワーカー消費)",
+                    "WITCH_NEGOTIATE": f"🤝 交渉の魔女({WITCH_NEGOTIATE_GRACE_COST}恩寵→{WITCH_NEGOTIATE_GOLD}金)",
+                }
+                return names.get(name, name)
+            names = {
+                "TRADE": f"💰 共通交易({SHARED_TRADE_GOLD}金)",
+                "HUNT": f"⚔️ 共通討伐({SHARED_HUNT_VP}VP)",
+                "PRAY": f"🙏 共通祈り({SHARED_PRAY_GRACE}恩寵)",
+                "RECRUIT": f"🧑‍🤝‍🧑 雇用({RECRUIT_COST}金→+1人)",
+            }
+            return names.get(act, act)
 
-        actions = []
-        for i in range(num_workers):
-            st.markdown(f"**ワーカー {i+1}**")
-            # ラジオボタンで横並び（モバイルでタップしやすく）
-            action = st.radio(
-                f"ワーカー{i+1}のアクション",
-                options=available_actions,
-                format_func=lambda x: action_info.get(x, x),
-                key=f"worker_{i}",
-                horizontal=True,
-                label_visibility="collapsed"
-            )
-            actions.append(action)
+        action = st.radio(
+            "アクション選択",
+            options=available_actions,
+            format_func=action_display,
+            key="wp_action_select",
+            label_visibility="collapsed"
+        )
 
         st.divider()
-        if st.button("✅ アクション確定", type="primary", use_container_width=True):
-            response = {
-                "actions": actions,
-            }
-            game.provide_input(response)
+        if st.button("✅ 配置確定", type="primary", use_container_width=True):
+            game.provide_input(action)
             run_until_input()
             st.rerun()
 
@@ -1069,3 +1186,9 @@ st.divider()
 with st.expander("ゲームログ", expanded=False):
     for msg in reversed(state["log"]):
         st.text(msg)
+
+# Auto-advance trick animation
+if st.session_state.get('trick_animating', False):
+    time.sleep(1.0)
+    advance_trick_animation()
+    st.rerun()

@@ -14,11 +14,72 @@
         <div id="start-screen" class="screen active">
             <div class="start-container">
                 <h1 class="title">Coven</h1>
-                <p class="subtitle">Trick-Taking & Worker Placement</p>
-                <div class="start-options">
-                    <label for="seed-input">シード値（任意）:</label>
-                    <input type="number" id="seed-input" placeholder="ランダム">
-                    <button id="start-btn" class="btn btn-primary">ゲーム開始</button>
+                <p class="subtitle">Trick-Taking &amp; Worker Placement</p>
+
+                <div class="lobby-form">
+                    <div class="form-group">
+                        <label for="player-name-input">プレイヤー名:</label>
+                        <input type="text" id="player-name-input" placeholder="名前を入力" maxlength="10">
+                    </div>
+
+                    <div class="start-actions">
+                        <button id="create-room-btn" class="btn btn-primary">ルーム作成</button>
+
+                        <div class="join-room-group">
+                            <input type="text" id="room-code-input" placeholder="ルームコード" maxlength="6" style="text-transform: uppercase;">
+                            <button id="join-room-btn" class="btn btn-primary">参加</button>
+                        </div>
+
+                        <div class="divider"><span>または</span></div>
+
+                        <div class="solo-play-group">
+                            <label for="seed-input">シード値（任意）:</label>
+                            <input type="number" id="seed-input" placeholder="ランダム">
+                            <div class="ai-toggle">
+                                <label><input type="checkbox" id="ai-bot-toggle"> AI Bot (Haiku 4.5)</label>
+                            </div>
+                            <button id="start-btn" class="btn btn-secondary">ソロプレイ (CPU対戦)</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lobby Screen -->
+        <div id="lobby-screen" class="screen">
+            <div class="lobby-container">
+                <h2>ロビー</h2>
+                <div class="room-code-display">
+                    ルームコード: <span id="lobby-room-code" class="room-code-value">------</span>
+                    <button id="copy-code-btn" class="btn btn-icon" title="コピー">コピー</button>
+                </div>
+
+                <div class="player-slots" id="player-slots">
+                    <div class="player-slot empty" data-slot="0">
+                        <span class="slot-number">1</span>
+                        <span class="slot-name">---</span>
+                        <span class="slot-status"></span>
+                    </div>
+                    <div class="player-slot empty" data-slot="1">
+                        <span class="slot-number">2</span>
+                        <span class="slot-name">---</span>
+                        <span class="slot-status"></span>
+                    </div>
+                    <div class="player-slot empty" data-slot="2">
+                        <span class="slot-number">3</span>
+                        <span class="slot-name">---</span>
+                        <span class="slot-status"></span>
+                    </div>
+                    <div class="player-slot empty" data-slot="3">
+                        <span class="slot-number">4</span>
+                        <span class="slot-name">---</span>
+                        <span class="slot-status"></span>
+                    </div>
+                </div>
+
+                <div class="lobby-actions">
+                    <button id="start-game-btn" class="btn btn-primary hidden">ゲーム開始</button>
+                    <button id="leave-room-btn" class="btn btn-secondary">退出</button>
                 </div>
             </div>
         </div>
@@ -28,7 +89,7 @@
             <!-- Header -->
             <header class="game-header">
                 <div class="header-left">
-                    <span class="round-display">Round <span id="round-no">1</span>/6</span>
+                    <span class="round-display">Round <span id="round-no">1</span>/<span id="total-rounds">6</span></span>
                     <span class="phase-display" id="phase-display">Starting...</span>
                 </div>
                 <div class="header-right">
@@ -127,22 +188,12 @@
                                 <span class="stat-value" id="p1-grace">0</span>
                             </div>
                             <div class="stat-item">
+                                <span class="stat-label">負債</span>
+                                <span class="stat-value" id="p1-debt" style="color: var(--danger, #dc3545)">0</span>
+                            </div>
+                            <div class="stat-item">
                                 <span class="stat-label">ワーカー</span>
                                 <span class="stat-value" id="p1-workers">2</span>
-                            </div>
-                        </div>
-                        <div class="levels-grid">
-                            <div class="level-item">
-                                <span class="level-label">交易</span>
-                                <span class="level-value" id="p1-trade-level">Lv0</span>
-                            </div>
-                            <div class="level-item">
-                                <span class="level-label">討伐</span>
-                                <span class="level-value" id="p1-hunt-level">Lv0</span>
-                            </div>
-                            <div class="level-item">
-                                <span class="level-label">祈り</span>
-                                <span class="level-value" id="p1-pray-level">Lv0</span>
                             </div>
                         </div>
                         <div class="declaration-info">
