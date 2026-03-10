@@ -914,15 +914,14 @@ class UIManager {
 
         const grid = document.getElementById('actions-grid');
 
-        // Categorize actions
-        const commonActions = [];
-        const personalActions = [];
+        // Categorize actions: spots (common + shared) together, recruit separate
+        const spotActions = [];
         const otherActions = [];
 
         actions.forEach(action => {
-            if (['TRADE', 'HUNT', 'PRAY'].includes(action)) commonActions.push(action);
+            if (['TRADE', 'HUNT', 'PRAY'].includes(action)) spotActions.push(action);
             else if (action === 'RECRUIT') otherActions.push(action);
-            else if (action.startsWith('SPOT:')) personalActions.push(action);
+            else if (action.startsWith('SPOT:')) spotActions.push(action);
             else otherActions.push(action);
         });
 
@@ -937,8 +936,7 @@ class UIManager {
                 const ownerName = parts[1];
                 const spotName = parts[3];
                 const playerName = context.player_name || '';
-                const isOwn = (ownerName === playerName);
-                const ownerTag = isOwn ? '' : ` [${ownerName}]`;
+                const ownerTag = ` [${ownerName}]`;
                 const spotInfo = {
                     'UP_TRADE': { name: '交易', effect: '+金', icon: '💰' },
                     'UP_HUNT': { name: '討伐', effect: '+VP', icon: '⚔️' },
@@ -947,6 +945,7 @@ class UIManager {
                     'WITCH_NEGOTIATE': { name: '交渉の魔女', effect: '1恩寵→2金', icon: '🤝' },
                 };
                 const info = spotInfo[spotName] || { name: spotName, effect: '', icon: '' };
+                const isOwn = (ownerName === playerName);
                 const ownerNote = isOwn ? '' : ` → ${ownerName}+1金`;
                 return { name: `${info.name}${ownerTag}`, effect: `${info.effect}${ownerNote}`, category: 'personal' };
             }
@@ -966,20 +965,13 @@ class UIManager {
             return btn;
         };
 
-        // Add section labels and buttons
-        if (commonActions.length > 0) {
+        // Add section labels and buttons (1段にまとめて表示)
+        if (spotActions.length > 0) {
             const label = document.createElement('div');
             label.className = 'action-section-label';
-            label.textContent = '共通スポット（早い者勝ち）';
+            label.textContent = 'スポット';
             grid.appendChild(label);
-            commonActions.forEach(a => grid.appendChild(createBtn(a)));
-        }
-        if (personalActions.length > 0) {
-            const label = document.createElement('div');
-            label.className = 'action-section-label';
-            label.textContent = '共有スポット';
-            grid.appendChild(label);
-            personalActions.forEach(a => grid.appendChild(createBtn(a)));
+            spotActions.forEach(a => grid.appendChild(createBtn(a)));
         }
         if (otherActions.length > 0) {
             otherActions.forEach(a => grid.appendChild(createBtn(a)));
@@ -1028,6 +1020,20 @@ class UIManager {
             return `<span class="${cls}">${names[spot]}: ${status}</span>`;
         }).join('');
 
+        // Build shared board display (1行表示)
+        const spotNames = {
+            'UP_TRADE': '💰交易', 'UP_HUNT': '⚔️討伐', 'UP_PRAY': '🙏祈り',
+            'UP_RITUAL': '✨儀式', 'WITCH_NEGOTIATE': '🤝交渉',
+        };
+        const sharedBoardHtml = (sharedBoard || []).map(s => {
+            const name = spotNames[s.type] || s.type;
+            const lv = s.level >= 2 ? ` Lv${s.level}` : '';
+            // Check if this spot is used this round
+            const ownerUsed = personal_spots_used[s.owner] || [];
+            const isUsed = false; // We don't track by type easily here
+            return `<span class="wp-spot available">${name}${lv}[${s.owner}]</span>`;
+        }).join('');
+
         // Build activity feed from placement log
         const feedHtml = (placement_log || []).map(msg => {
             // Highlight player names
@@ -1044,12 +1050,64 @@ class UIManager {
                 <div class="wp-section-title">共通スポット</div>
                 <div class="wp-common-spots">${commonHtml}</div>
             </div>
+            ${sharedBoardHtml ? `
+            <div class="wp-section">
+                <div class="wp-section-title">共有ボード</div>
+                <div class="wp-common-spots">${sharedBoardHtml}</div>
+            </div>` : ''}
             ${feedHtml ? `
             <div class="wp-section">
                 <div class="wp-section-title">アクション履歴</div>
                 <div class="wp-feed">${feedHtml}</div>
             </div>` : ''}
         `;
+    }
+
+    /**
+     * Animate a CPU worker placement action on the board
+     */
+    animateWorkerPlacement(state, actionInfo) {
+        if (!actionInfo) return;
+
+        // Update the full game state (board, player info, log, etc.)
+        this.updateGameState(state, false);
+
+        // Create floating notification for the action
+        const player = actionInfo.player;
+        const display = actionInfo.display;
+        const effects = (actionInfo.effects || []).join(', ');
+
+        // Remove any existing wp notification
+        const existing = document.getElementById('wp-action-notification');
+        if (existing) existing.remove();
+
+        const notification = document.createElement('div');
+        notification.id = 'wp-action-notification';
+        notification.className = 'wp-action-notification';
+        notification.innerHTML = `
+            <div class="wp-notif-player">${this.escapeHtml(player)}</div>
+            <div class="wp-notif-action">${this.escapeHtml(display)}</div>
+            <div class="wp-notif-effects">${this.escapeHtml(effects)}</div>
+        `;
+
+        // Insert at top of game area (play area)
+        const playArea = document.querySelector('.play-area') || document.querySelector('.game-area') || document.querySelector('main');
+        if (playArea) {
+            playArea.prepend(notification);
+        } else {
+            document.body.appendChild(notification);
+        }
+
+        // Trigger animation
+        requestAnimationFrame(() => {
+            notification.classList.add('show');
+        });
+
+        // Remove after animation
+        setTimeout(() => {
+            notification.classList.add('fade-out');
+            setTimeout(() => notification.remove(), 500);
+        }, 1400);
     }
 
     /**

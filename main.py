@@ -2422,6 +2422,8 @@ class GameEngine:
         self.trick_leader = 0
         self.trick_player_offset = 0
         self.trick_play_just_happened = False  # Animation flag: True after any card play in a trick
+        self.wp_action_just_happened = False  # Animation flag: True after any bot worker placement
+        self.wp_last_action_info: Optional[Dict[str, Any]] = None  # Last worker placement action info
 
         # Worker placement state (ナショエコ式)
         self.wp_player_index = 0
@@ -2521,6 +2523,8 @@ class GameEngine:
             "game_over": self.phase == "game_end",
             "shared_board": self._build_shared_board(),
             "worker_placement_info": self._build_worker_placement_info(),
+            "wp_action_just_happened": self.wp_action_just_happened,
+            "wp_last_action_info": self.wp_last_action_info,
         }
 
     def get_pending_input(self) -> Optional[InputRequest]:
@@ -2996,6 +3000,13 @@ class GameEngine:
                 ps.workers_remaining[player.name] -= 1
                 effects_str = ", ".join(result["effects"])
                 self._log(f"{player.name}: {result['display']} → {effects_str}")
+                self.wp_action_just_happened = True
+                self.wp_last_action_info = {
+                    "player": player.name,
+                    "action": action,
+                    "display": result["display"],
+                    "effects": result["effects"],
+                }
                 self.wp_order_idx += 1
             else:
                 self._pending_input = InputRequest(

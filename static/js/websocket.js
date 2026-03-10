@@ -14,6 +14,7 @@ class WebSocketManager {
         this.handlers = {
             state_update: [],
             trick_animation: [],
+            wp_animation: [],
             error: [],
             connected: [],
             disconnected: [],
@@ -122,6 +123,9 @@ class WebSocketManager {
                 break;
             case 'trick_animation':
                 this.emit('trick_animation', rest.data || rest);
+                break;
+            case 'wp_animation':
+                this.emit('wp_animation', { state: rest.data || rest, action_info: rest.action_info });
                 break;
             case 'lobby_state':
                 this.emit('lobby_state', rest.data || rest);

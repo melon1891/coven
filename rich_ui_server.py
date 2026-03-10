@@ -441,7 +441,16 @@ class GameSession:
             # Track each card play for animation
             if self.engine.trick_play_just_happened:
                 self.engine.trick_play_just_happened = False
-                animation_steps.append(self._serialize_state(self.engine.get_state()))
+                animation_steps.append({"type": "trick", "state": self._serialize_state(self.engine.get_state())})
+
+            # Track each bot worker placement for animation
+            if self.engine.wp_action_just_happened:
+                self.engine.wp_action_just_happened = False
+                animation_steps.append({
+                    "type": "worker_placement",
+                    "state": self._serialize_state(self.engine.get_state()),
+                    "action_info": self.engine.wp_last_action_info,
+                })
 
             await asyncio.sleep(0.001)
 
@@ -494,7 +503,17 @@ async def provide_input(session_id: str, response: Dict[str, Any]):
     # Step until next input needed, collecting animation steps
     state, animation_steps = await session.step_until_input_animated()
 
-    return {"success": True, "state": state, "animation_steps": animation_steps}
+    # Flatten animation steps for REST API response
+    flat_steps = []
+    for step in animation_steps:
+        step_type = step.get("type", "trick")
+        step_state = step.get("state", step)
+        entry = {**step_state, "animation_type": step_type}
+        if step_type == "worker_placement":
+            entry["action_info"] = step.get("action_info")
+        flat_steps.append(entry)
+
+    return {"success": True, "state": state, "animation_steps": flat_steps}
 
 
 @app.websocket("/ws/{session_id}")
@@ -522,13 +541,23 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             if data.get("type") == "input":
                 input_value = data.get("data")
                 if session.provide_input(input_value):
-                    # Step with animation: send intermediate states for each card play
+                    # Step with animation: send intermediate states for each card/worker play
                     state, animation_steps = await session.step_until_input_animated()
                     # Send each animation step with a delay
-                    for step_state in animation_steps:
-                        step_state["pending_input"] = None  # Intermediate states have no input
-                        await websocket.send_json({"type": "trick_animation", "data": step_state})
-                        await asyncio.sleep(0.8)
+                    for step in animation_steps:
+                        step_type = step.get("type", "trick")
+                        step_state = step.get("state", step)
+                        step_state["pending_input"] = None
+                        if step_type == "worker_placement":
+                            await websocket.send_json({
+                                "type": "wp_animation",
+                                "data": step_state,
+                                "action_info": step.get("action_info"),
+                            })
+                            await asyncio.sleep(1.0)
+                        else:
+                            await websocket.send_json({"type": "trick_animation", "data": step_state})
+                            await asyncio.sleep(0.8)
                     # Send final state
                     await websocket.send_json({"type": "state_update", "data": state})
                 else:
@@ -751,15 +780,21 @@ async def room_websocket_endpoint(websocket: WebSocket, room_code: str, token: s
                         state, animation_steps = await session.step_until_input_animated()
 
                         # Send animation steps to ALL players
-                        for step_state in animation_steps:
+                        for step in animation_steps:
+                            step_type = step.get("type", "trick")
+                            step_state = step.get("state", step)
                             step_state["pending_input"] = None
+                            msg_type = "wp_animation" if step_type == "worker_placement" else "trick_animation"
+                            msg = {"type": msg_type, "data": step_state}
+                            if step_type == "worker_placement":
+                                msg["action_info"] = step.get("action_info")
                             for p in room.players.values():
                                 if p.websocket and p.is_connected:
                                     try:
-                                        await p.websocket.send_json({"type": "trick_animation", "data": step_state})
+                                        await p.websocket.send_json(msg)
                                     except Exception:
                                         pass
-                            await asyncio.sleep(0.8)
+                            await asyncio.sleep(1.0 if step_type == "worker_placement" else 0.8)
 
                         # Check if game is over
                         if state.get("game_over", False):

@@ -812,6 +812,38 @@ if state.get("sealed_by_player"):
                         st.markdown(f"**{pname}**")
                         st.text(", ".join(sealed_cards) if sealed_cards else "-")
 
+# Shared Board display（共有ボード：全スポットを1行表示）
+if state.get("shared_board") and not state["game_over"]:
+    board = state["shared_board"]
+    if board:
+        spot_type_names = {
+            "UP_TRADE": "交易", "UP_HUNT": "討伐", "UP_PRAY": "祈り",
+            "UP_RITUAL": "儀式", "WITCH_NEGOTIATE": "交渉",
+        }
+        spot_type_emoji = {
+            "UP_TRADE": "💰", "UP_HUNT": "⚔️", "UP_PRAY": "🙏",
+            "UP_RITUAL": "✨", "WITCH_NEGOTIATE": "🤝",
+        }
+        spot_labels = []
+        for s in board:
+            owner_short = s["owner"].replace("Player ", "P")
+            name = spot_type_names.get(s["type"], s["type"])
+            emoji = spot_type_emoji.get(s["type"], "")
+            lv = f" Lv{s['level']}" if s["level"] >= 2 else ""
+            spot_labels.append(f"{emoji}{name}{lv}[{owner_short}]")
+        st.markdown(f"**共有ボード**: {' | '.join(spot_labels)}")
+
+# Worker Placement Log（CPU行動の表示）
+wp_info = state.get("worker_placement_info")
+if wp_info and not state["game_over"]:
+    placement_log = wp_info.get("placement_log", [])
+    if placement_log:
+        with st.expander("👷 配置履歴", expanded=True):
+            for msg in placement_log:
+                # Playerをショート表記に
+                display_msg = msg.replace("Player ", "P")
+                st.text(display_msg)
+
 # Trick History display（コンパクト表示）
 if state["trick_history"]:
     with st.expander(f"🎴 トリック結果 ({len(state['trick_history'])}/{TRICKS_PER_ROUND})", expanded=True):
@@ -1122,21 +1154,32 @@ if pending is not None:
 
         st.info(f"残りワーカー: {num_workers}人 — 1つのアクションを選択")
 
-        # アクション名の表示用変換（レベル対応）
+        # アクション名の表示用変換（レベル対応・所有者表示）
         def action_display(act):
             if act.startswith("SPOT:"):
-                _, _, name = act.split(":", 2)
-                level = player.personal_spots.count(name)
+                parts = act.split(":", 3)
+                owner_name = parts[1]
+                spot_name = parts[3]
+                # 所有者のレベル判定
+                owner_short = owner_name.replace("Player ", "P")
+                owner_data = None
+                for p_info in state["players"]:
+                    if p_info["name"] == owner_name:
+                        owner_data = p_info
+                        break
+                level = 1
+                if owner_data and spot_name in owner_data.get("leveled_spots", []):
+                    level = 2
                 lv_tag = f" Lv{level}" if level >= 2 else ""
                 bonus = level - 1
                 names = {
-                    "UP_TRADE": f"💰 共有交易{lv_tag}({PERSONAL_TRADE_GOLD + bonus}金)",
-                    "UP_HUNT": f"⚔️ 共有討伐{lv_tag}({PERSONAL_HUNT_VP + bonus}VP)",
-                    "UP_PRAY": f"🙏 共有祈り{lv_tag}({PERSONAL_PRAY_GRACE + bonus}恩寵)",
-                    "UP_RITUAL": f"✨ 共有儀式{lv_tag}({PERSONAL_RITUAL_GRACE + bonus}恩寵 or {PERSONAL_RITUAL_GOLD + bonus}金, ワーカー消費)",
-                    "WITCH_NEGOTIATE": f"🤝 交渉の魔女({WITCH_NEGOTIATE_GRACE_COST}恩寵→{WITCH_NEGOTIATE_GOLD}金)",
+                    "UP_TRADE": f"💰 交易{lv_tag}[{owner_short}]({PERSONAL_TRADE_GOLD + bonus}金)",
+                    "UP_HUNT": f"⚔️ 討伐{lv_tag}[{owner_short}]({PERSONAL_HUNT_VP + bonus}VP)",
+                    "UP_PRAY": f"🙏 祈り{lv_tag}[{owner_short}]({PERSONAL_PRAY_GRACE + bonus}恩寵)",
+                    "UP_RITUAL": f"✨ 儀式{lv_tag}[{owner_short}]({PERSONAL_RITUAL_GRACE + bonus}恩寵 or {PERSONAL_RITUAL_GOLD + bonus}金, ワーカー消費)",
+                    "WITCH_NEGOTIATE": f"🤝 交渉の魔女[{owner_short}]({WITCH_NEGOTIATE_GRACE_COST}恩寵→{WITCH_NEGOTIATE_GOLD}金)",
                 }
-                return names.get(name, name)
+                return names.get(spot_name, spot_name)
             names = {
                 "TRADE": f"💰 共通交易({SHARED_TRADE_GOLD}金)",
                 "HUNT": f"⚔️ 共通討伐({SHARED_HUNT_VP}VP)",
@@ -1198,9 +1241,9 @@ else:
     else:
         st.info(f"フェーズ: {state['phase']}")
 
-# Game log
+# Game log（直近のログを表示）
 st.divider()
-with st.expander("ゲームログ", expanded=False):
+with st.expander("ゲームログ", expanded=True):
     for msg in reversed(state["log"]):
         st.text(msg)
 

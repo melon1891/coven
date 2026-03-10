@@ -226,18 +226,27 @@ class GameManager {
             let shownTrickCount = prevTrickCount;
             if (data.animation_steps && data.animation_steps.length > 0) {
                 for (const step of data.animation_steps) {
-                    const stepTrickCount = (step.trick_history || []).length;
+                    const animType = step.animation_type || 'trick';
 
-                    if (stepTrickCount > shownTrickCount) {
-                        for (let i = shownTrickCount; i < stepTrickCount; i++) {
-                            await uiManager.showTrickResult(step.trick_history[i]);
+                    if (animType === 'worker_placement') {
+                        // Animate CPU worker placement
+                        uiManager.animateWorkerPlacement(step, step.action_info);
+                        await new Promise(r => setTimeout(r, 1800));
+                    } else {
+                        // Trick animation
+                        const stepTrickCount = (step.trick_history || []).length;
+
+                        if (stepTrickCount > shownTrickCount) {
+                            for (let i = shownTrickCount; i < stepTrickCount; i++) {
+                                await uiManager.showTrickResult(step.trick_history[i]);
+                            }
+                            uiManager.updateTrickPlays([]);
+                            shownTrickCount = stepTrickCount;
                         }
-                        uiManager.updateTrickPlays([]);
-                        shownTrickCount = stepTrickCount;
-                    }
 
-                    uiManager.updateTrickPlays(step.current_trick_plays || []);
-                    await new Promise(r => setTimeout(r, 800));
+                        uiManager.updateTrickPlays(step.current_trick_plays || []);
+                        await new Promise(r => setTimeout(r, 800));
+                    }
                 }
             }
 

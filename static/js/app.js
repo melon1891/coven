@@ -45,6 +45,12 @@ function setupWebSocketHandlers() {
         }
     });
 
+    wsManager.on('wp_animation', (data) => {
+        if (data && data.action_info) {
+            uiManager.animateWorkerPlacement(data.state, data.action_info);
+        }
+    });
+
     wsManager.on('error', (data) => {
         console.error('WebSocket error:', data.message);
     });
