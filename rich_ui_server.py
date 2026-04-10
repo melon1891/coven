@@ -196,6 +196,9 @@ class GameSession:
         # Shared board
         result["shared_board"] = state.get("shared_board", [])
 
+        # Witch candidates (revealed from game start)
+        result["witch_candidates"] = state.get("witch_candidates", [])
+
         return result
 
     def _serialize_pending_input(self, pending) -> Dict[str, Any]:
@@ -310,23 +313,24 @@ class GameSession:
                         break
 
         elif pending.type == "grace_hand_swap":
-            # Convert list of card dicts to single Card object (or None to skip)
+            # Convert list of card dicts/strings to list of indices (or None to skip)
             if response is None or (isinstance(response, list) and len(response) == 0):
                 response = None  # Skip swap
             elif isinstance(response, list):
-                cards = pending.context.get("hand", [])
-                # Take first card only (main.py expects single Card or None)
-                r = response[0]
-                if isinstance(r, dict):
-                    for card in cards:
-                        if card.suit == r.get("suit") and card.rank == r.get("rank"):
-                            response = card
-                            break
-                elif isinstance(r, str):
-                    for card in cards:
-                        if str(card) == r:
-                            response = card
-                            break
+                hand = pending.context.get("hand", [])
+                indices = []
+                for r in response:
+                    if isinstance(r, dict):
+                        for i, card in enumerate(hand):
+                            if card.suit == r.get("suit") and card.rank == r.get("rank") and i not in indices:
+                                indices.append(i)
+                                break
+                    elif isinstance(r, str):
+                        for i, card in enumerate(hand):
+                            if str(card) == r and i not in indices:
+                                indices.append(i)
+                                break
+                response = indices if indices else None
 
         elif pending.type == "upgrade":
             # Normalize upgrade response

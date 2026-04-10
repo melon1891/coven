@@ -9,8 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-# Streamlit secrets (contains passwords)
-.streamlit/secrets.toml
 
 # Environment variables
 .env

@@ -2,7 +2,7 @@
 
 ## 概要
 
-魔女協会（Coven）のブラウザベースリッチUIを実装する。現在のStreamlit UIを維持しつつ、新しいモダンなWebアプリケーションUIを追加する。
+魔女協会（Coven）のブラウザベースリッチUIを実装する（Streamlit版は廃止済み）。
 
 ## 目標
 
@@ -30,8 +30,7 @@
 ```
 witchASC/
 ├── main.py                    # 既存（変更なし）
-├── streamlit_app.py           # 既存Streamlit UI（変更なし）
-├── rich_ui_server.py          # 新規: FastAPI サーバー
+├── rich_ui_server.py          # FastAPI サーバー
 ├── static/
 │   ├── css/
 │   │   ├── main.css           # メインスタイル
@@ -246,22 +245,11 @@ witchASC/
 ### 5.1 起動オプション
 
 ```bash
-# 既存Streamlit UI
-uv run streamlit run streamlit_app.py
-
-# 新リッチUI
+# リッチUI
 uv run python run_rich_ui.py
 
 # または
 uv run python main.py --rich-ui
-```
-
-### 5.2 設定ファイル
-
-```python
-# config.py
-UI_MODE = "streamlit"  # or "rich"
-RICH_UI_PORT = 8080
 ```
 
 ---

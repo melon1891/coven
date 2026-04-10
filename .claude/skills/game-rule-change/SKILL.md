@@ -14,7 +14,7 @@ main.py内で同じゲームロジックが3箇所に実装されている:
 | パス | 関数/メソッド | 用途 |
 |------|-------------|------|
 | CLI | `apply_declaration_bonus()`, `resolve_actions()`, `pay_wages_and_debt()`, ゲーム終了処理 | コマンドラインプレイ |
-| GameEngine | `_apply_declaration_bonus()`, `_finish_game()`, worker_placement phase | Streamlit GUI |
+| GameEngine | `_apply_declaration_bonus()`, `_finish_game()`, worker_placement phase | Rich UI (WebSocket) |
 | Simulation | `run_single_game_quiet()` 内のインライン処理 | カードランク/恩寵シミュレーション |
 | Simulation (debt) | `run_single_game_quiet_debt()` 内のインライン処理 | 負債ペナルティシミュレーション |
 
@@ -27,8 +27,7 @@ main.py内で同じゲームロジックが3箇所に実装されている:
 5. **Simulation更新**: `run_single_game_quiet()` 内の対応箇所を更新
 6. **Simulation (debt)更新**: `run_single_game_quiet_debt()` 内の対応箇所を更新
 7. **CLAUDE.md更新**: 定数セクションを更新
-8. **streamlit_app.py更新**: import文とUI説明文を更新
-9. **動作確認**: `PYTHONIOENCODING=utf-8 uv run python main.py --auto` で確認
+8. **動作確認**: `PYTHONIOENCODING=utf-8 uv run python main.py --auto` で確認
 10. **制約検証**: GameEngineを使った制約テストを実行
 
 ### 検索のコツ
@@ -41,7 +40,6 @@ main.py内で同じゲームロジックが3箇所に実装されている:
 ### 注意事項
 - Bot戦略（`STRATEGIES`辞書）内のパラメータも変更が必要なことがある（例: `max_workers`）
 - アップグレード説明文（`upgrade_description()`）も更新が必要なことがある
-- streamlit_app.pyのimport文に新しい定数を追加する場合、既存のimport行を確認する
 - Rich UI (`static/js/ui.js`) のワーカー配置UI・結果画面も更新が必要
 - Rich UIサーバー (`rich_ui_server.py`) のcontext送信も確認
 - **共有スポット方式**: アクション文字列は `SPOT:{owner}:{idx}:{type}` 形式

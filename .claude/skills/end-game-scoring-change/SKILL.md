@@ -54,7 +54,6 @@ User-invocable: true
 ### 関連ファイルの更新
 - `CLAUDE.md` - Grace System Constants セクション、Game Flow セクション
 - `README.md` - 恩寵システムの説明、ラウンドの流れ
-- `streamlit_app.py` - 恩寵システムの説明文（expander内）
 - `static/js/ui.js` - ゲーム結果画面（`showResult` メソッド）
 - `static/css/main.css` - 結果画面のスタイル（ranking-detail等）
 

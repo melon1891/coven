@@ -28,7 +28,7 @@ User-invocable: true
 ### 関連ファイルの更新
 - `CLAUDE.md` - Game Flow セクションのUpgrade Selection説明
 - `README.md` - ラウンドの流れ（5. アップグレード選択）
-- `streamlit_app.py` - ルール説明文があれば更新
+- `static/js/ui.js` - Rich UIのルール説明文があれば更新
 
 ### 注意事項
 - `rank_players_for_upgrade` と `determine_placement_order` は同じソート基準に保つのが望ましい

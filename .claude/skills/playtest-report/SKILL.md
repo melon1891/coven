@@ -25,8 +25,8 @@ User-invocable: true
 
 2. **影響範囲分析**: 各項目について影響を受けるファイル・関数を特定
    - main.py: CLI / GameEngine / Simulation のどのパスに影響するか
-   - streamlit_app.py: import / UI説明文に影響するか
    - CLAUDE.md: 定数記述の更新が必要か
+   - Rich UI (`static/js/ui.js`): 表示・結果画面に影響するか
 
 3. **タスクリスト生成**: TaskCreateを使い、以下の形式でタスクを作成
    - 各バランス調整項目を1タスクとして作成
